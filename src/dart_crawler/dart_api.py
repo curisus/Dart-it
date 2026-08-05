@@ -109,48 +109,54 @@ class DartApi:
 
     def find_disclosure(self, rcept_no: str) -> Result[DartListRow]:
         """Find one disclosure by its receipt number in the receipt-day window."""
+        return self._find_disclosure_paged(rcept_no)
+
+    def _find_disclosure_paged(self, rcept_no: str) -> Result[DartListRow]:
         receipt_date = rcept_no[:8]
         for detail_type in ("A001", "A002", "A003"):
-            response = self._get_json(
-                _LIST_URL,
-                {
-                    "bgn_de": receipt_date,
-                    "end_de": receipt_date,
-                    "pblntf_ty": "A",
-                    "pblntf_detail_ty": detail_type,
-                    "sort": "date",
-                    "sort_mth": "desc",
-                    "page_no": "1",
-                    "page_count": "100",
-                },
-            )
-            if not response.ok or response.data is None:
-                return Result.failure(
-                    response.error
-                    if response.error is not None
-                    else error_info(
-                        ErrorCode.UPSTREAM_UNAVAILABLE,
-                        "접수번호 공시를 찾을 수 없습니다.",
-                        retryable=True,
-                    )
+            for page_no in range(1, 101):
+                response = self._get_json(
+                    _LIST_URL,
+                    {
+                        "bgn_de": receipt_date,
+                        "end_de": receipt_date,
+                        "pblntf_ty": "A",
+                        "pblntf_detail_ty": detail_type,
+                        "sort": "date",
+                        "sort_mth": "desc",
+                        "page_no": str(page_no),
+                        "page_count": "100",
+                    },
                 )
-            try:
-                parsed = DartListResponse.model_validate_json(response.data.content)
-            except ValidationError:
-                return Result.failure(
-                    error_info(
-                        ErrorCode.PARSE_FAILED,
-                        "OpenDART 공시 응답 형식을 해석할 수 없습니다.",
-                        retryable=False,
+                if not response.ok or response.data is None:
+                    return Result.failure(
+                        response.error
+                        if response.error is not None
+                        else error_info(
+                            ErrorCode.UPSTREAM_UNAVAILABLE,
+                            "접수번호 공시를 가져올 수 없습니다.",
+                            retryable=True,
+                        )
                     )
-                )
-            if parsed.status == "013":
-                continue
-            if parsed.status != "000":
-                return Result.failure(_dart_status_error(parsed.status, parsed.message))
-            for row in parsed.list:
-                if row.rcept_no == rcept_no:
-                    return Result.success(row)
+                try:
+                    parsed = DartListResponse.model_validate_json(response.data.content)
+                except ValidationError:
+                    return Result.failure(
+                        error_info(
+                            ErrorCode.PARSE_FAILED,
+                            "OpenDART 공시 응답 형식을 해석할 수 없습니다.",
+                            retryable=False,
+                        )
+                    )
+                if parsed.status == "013":
+                    break
+                if parsed.status != "000":
+                    return Result.failure(_dart_status_error(parsed.status, parsed.message))
+                for row in parsed.list:
+                    if row.rcept_no == rcept_no:
+                        return Result.success(row)
+                if len(parsed.list) < 100:
+                    break
         return Result.failure(
             error_info(
                 ErrorCode.NOT_FOUND,
@@ -177,7 +183,11 @@ class DartApi:
 
     def fetch_viewer_document(self, rcept_no: str, dcm_no: str) -> Result[bytes]:
         """Fetch one DART viewer iframe document by its document number."""
-        page = self.fetch_viewer_html(rcept_no)
+        page = self._get_bytes(
+            _VIEWER_URL,
+            {"rcpNo": rcept_no, "dcmNo": dcm_no},
+            include_api_key=False,
+        )
         if not page.ok or page.data is None:
             return Result.failure(
                 page.error
@@ -188,12 +198,37 @@ class DartApi:
                     retryable=True,
                 )
             )
-        params = _viewer_document_params(page.data, rcept_no, dcm_no)
-        return self._get_bytes(
-            _VIEWER_DOCUMENT_URL,
-            params,
-            include_api_key=False,
-        )
+        document_params = _viewer_document_params_list(page.data, rcept_no, dcm_no)
+        if not document_params:
+            document_params = (_viewer_document_params(page.data, rcept_no, dcm_no),)
+        documents: list[bytes] = []
+        for params in document_params:
+            document = self._get_bytes(
+                _VIEWER_DOCUMENT_URL,
+                params,
+                include_api_key=False,
+            )
+            if not document.ok or document.data is None:
+                return Result.failure(
+                    document.error
+                    if document.error is not None
+                    else error_info(
+                        ErrorCode.UPSTREAM_UNAVAILABLE,
+                        "DART viewer 臾몄꽌瑜??섏쭛?????놁뒿?덈떎.",
+                        retryable=True,
+                    )
+                )
+            if document.data:
+                documents.append(document.data)
+        if not documents:
+            return Result.failure(
+                error_info(
+                    ErrorCode.UPSTREAM_LAYOUT_CHANGED,
+                    "DART viewer 臾몄꽌 援ъ“瑜??댁꽍?????놁뒿?덈떎.",
+                    retryable=False,
+                )
+            )
+        return Result.success(b"\n".join(documents))
 
     def fetch_financial_accounts(
         self,
@@ -374,6 +409,9 @@ def _dart_status_error(status: str, message: str) -> ErrorInfo:
 def _viewer_document_params(
     content: bytes, rcept_no: str, dcm_no: str
 ) -> dict[str, str]:
+    params = _viewer_document_params_list(content, rcept_no, dcm_no)
+    if params:
+        return params[0]
     text = content.decode("utf-8", errors="replace")
     pattern = re.compile(
         r"viewDoc\(\s*[\"'](?P<rcp>\d{14})[\"']\s*,\s*"
@@ -393,3 +431,48 @@ def _viewer_document_params(
                 "dtd": match.group("dtd"),
             }
     return {"rcpNo": rcept_no, "dcmNo": dcm_no}
+
+
+def _viewer_document_params_list(
+    content: bytes, rcept_no: str, dcm_no: str
+) -> tuple[dict[str, str], ...]:
+    text = content.decode("utf-8", errors="replace")
+    assignment_pattern = re.compile(
+        r"(?P<node>node\d+)\['(?P<field>dcmNo|eleId|offset|length|dtd|tocNo)'\]"
+        r"\s*=\s*[\"'](?P<value>[^\"']*)[\"']",
+        flags=re.IGNORECASE,
+    )
+    current: dict[str, dict[str, str]] = {}
+    records: list[dict[str, str]] = []
+    for match in assignment_pattern.finditer(text):
+        node = match.group("node")
+        field = match.group("field")
+        if field.casefold() == "dcmno" and node in current:
+            records.append(current[node])
+            current[node] = {}
+        current.setdefault(node, {})[field.casefold()] = match.group("value")
+    records.extend(current.values())
+
+    params: list[dict[str, str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for record in records:
+        if record.get("dcmno") != dcm_no:
+            continue
+        required = ("eleid", "offset", "length", "dtd")
+        if any(field not in record for field in required):
+            continue
+        key = tuple(record[field] for field in ("dcmno", *required))
+        if key in seen:
+            continue
+        seen.add(key)
+        params.append(
+            {
+                "rcpNo": rcept_no,
+                "dcmNo": dcm_no,
+                "eleId": record["eleid"],
+                "offset": record["offset"],
+                "length": record["length"],
+                "dtd": record["dtd"],
+            }
+        )
+    return tuple(params)

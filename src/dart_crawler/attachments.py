@@ -165,47 +165,13 @@ def _attachments_from_viewer(
     content: bytes,
 ) -> Result[tuple[Attachment, ...]]:
     soup = BeautifulSoup(content, "lxml")
-    attachments: list[Attachment] = []
-    for link in soup.select("a[href]"):
-        href = link.get("href")
-        title = link.get_text(" ", strip=True)
-        if not isinstance(href, str) or not _is_report_title(title):
-            continue
-        dcm_match = re.search(r"(?:[?&])dcmNo=(\d+)", href)
-        if dcm_match is None:
-            continue
-        dcm_no = dcm_match.group(1)
-        attachments.append(
-            Attachment(
-                attachment_id=f"viewer:{rcept_no}:{dcm_no}",
-                rcept_no=rcept_no,
-                title=title,
-                source="viewer",
-                standalone="연결" not in title,
-                dcm_no=dcm_no,
-            )
+    attachments = _merge_viewer_attachments(
+        (
+            _viewer_option_attachments(rcept_no, soup),
+            _viewer_link_attachments(rcept_no, soup),
+            _viewer_script_attachments(rcept_no, soup, content),
         )
-    page_title = soup.title.get_text(" ", strip=True) if soup.title else ""
-    for match in re.finditer(
-        r"viewDoc\(\s*[\"'](\d{14})[\"']\s*,\s*[\"'](\d+)[\"']",
-        content.decode("utf-8", errors="replace"),
-        flags=re.IGNORECASE,
-    ):
-        if match.group(1) != rcept_no or not _is_report_title(page_title):
-            continue
-        dcm_no = match.group(2)
-        if any(item.dcm_no == dcm_no for item in attachments):
-            continue
-        attachments.append(
-            Attachment(
-                attachment_id=f"viewer:{rcept_no}:{dcm_no}",
-                rcept_no=rcept_no,
-                title=page_title,
-                source="viewer",
-                standalone="연결" not in page_title,
-                dcm_no=dcm_no,
-            )
-        )
+    )
     if not attachments:
         return Result.failure(
             error_info(
@@ -214,7 +180,107 @@ def _attachments_from_viewer(
                 retryable=False,
             )
         )
-    return Result.success(tuple(attachments))
+    return Result.success(attachments)
+
+
+def _viewer_option_attachments(
+    rcept_no: str,
+    soup: BeautifulSoup,
+) -> tuple[Attachment, ...]:
+    attachments: list[Attachment] = []
+    for option in soup.select("option[value]"):
+        value = option.get("value")
+        title = _viewer_report_title(option.get_text(" ", strip=True))
+        if not isinstance(value, str) or not _is_report_title(title):
+            continue
+        dcm_match = re.search(r"(?:^|[?&])dcmNo=(\d+)", value)
+        if dcm_match is None:
+            continue
+        dcm_no = dcm_match.group(1)
+        attachments.append(_viewer_attachment(rcept_no, dcm_no, title))
+    return tuple(attachments)
+
+
+def _viewer_link_attachments(
+    rcept_no: str,
+    soup: BeautifulSoup,
+) -> tuple[Attachment, ...]:
+    attachments: list[Attachment] = []
+    for link in soup.select("a[href]"):
+        href = link.get("href")
+        title = _viewer_report_title(link.get_text(" ", strip=True))
+        if not isinstance(href, str) or not _is_report_title(title):
+            continue
+        dcm_match = re.search(r"(?:[?&])dcmNo=(\d+)", href)
+        if dcm_match is None:
+            continue
+        dcm_no = dcm_match.group(1)
+        attachments.append(_viewer_attachment(rcept_no, dcm_no, title))
+    return tuple(attachments)
+
+
+def _viewer_script_attachments(
+    rcept_no: str,
+    soup: BeautifulSoup,
+    content: bytes,
+) -> tuple[Attachment, ...]:
+    page_title = _viewer_report_title(
+        soup.title.get_text(" ", strip=True) if soup.title else ""
+    )
+    if not _is_report_title(page_title):
+        return ()
+    attachments: list[Attachment] = []
+    for match in re.finditer(
+        r"viewDoc\(\s*[\"'](\d{14})[\"']\s*,\s*[\"'](\d+)[\"']",
+        content.decode("utf-8", errors="replace"),
+        flags=re.IGNORECASE,
+    ):
+        if match.group(1) != rcept_no or not _is_report_title(page_title):
+            continue
+        dcm_no = match.group(2)
+        attachments.append(_viewer_attachment(rcept_no, dcm_no, page_title))
+    return tuple(attachments)
+
+
+def _viewer_attachment(rcept_no: str, dcm_no: str, title: str) -> Attachment:
+    return Attachment(
+        attachment_id=f"viewer:{rcept_no}:{dcm_no}",
+        rcept_no=rcept_no,
+        title=title,
+        source="viewer",
+        standalone="연결" not in title,
+        dcm_no=dcm_no,
+    )
+
+
+def _merge_viewer_attachments(
+    groups: tuple[tuple[Attachment, ...], ...],
+) -> tuple[Attachment, ...]:
+    attachments: list[Attachment] = []
+    seen: set[str] = set()
+    for group in groups:
+        for attachment in group:
+            if attachment.dcm_no is None or attachment.dcm_no in seen:
+                continue
+            seen.add(attachment.dcm_no)
+            attachments.append(attachment)
+    return tuple(attachments)
+
+
+def _viewer_report_title(title: str) -> str:
+    compact = " ".join(title.split())
+    consolidated = "연결" in compact
+    if "분기" in compact and "검토보고서" in compact:
+        base = "분기검토보고서"
+    elif "반기" in compact and "검토보고서" in compact:
+        base = "반기검토보고서"
+    elif "감사보고서" in compact:
+        base = "감사보고서"
+    elif "검토보고서" in compact:
+        base = "검토보고서"
+    else:
+        return compact
+    return f"{'연결' if consolidated else '별도'}{base}"
 
 
 def _is_report_title(title: str) -> bool:
@@ -223,10 +289,6 @@ def _is_report_title(title: str) -> bool:
         for keyword in (
             "감사보고서",
             "검토보고서",
-            "재무제표",
-            "사업보고서",
-            "반기보고서",
-            "분기보고서",
         )
     )
 
