@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/initial_mcp_server]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python-version: "3.13"
+            experimental: false
+          - os: ubuntu-latest
+            python-version: "3.13"
+            experimental: true
+          - os: macos-latest
+            python-version: "3.13"
+            experimental: true
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Sync locked environment
+        run: uv sync --frozen
+      - name: Ruff
+        run: uv run ruff check .
+      - name: Mypy
+        run: uv run mypy --strict src tests
+      - name: Pytest
+        run: uv run pytest -v
+      - name: Build
+        run: uv build
