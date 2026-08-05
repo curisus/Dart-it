@@ -6,6 +6,9 @@ import re
 from decimal import Decimal, InvalidOperation
 
 _NUMBER = re.compile(r"^\(?[+-]?\d+(?:\.\d+)?\)?$")
+_NEGATIVE_FORMULA = re.compile(
+    r"^-[ \t]*(?:[A-Za-z_$][A-Za-z0-9_.$]*\s*\(|\$?[A-Z]{1,3}\$?\d+)"
+)
 
 
 def parse_cell_value(text: str, *, unit_multiplier: int = 1) -> int | float | str:
@@ -29,6 +32,6 @@ def parse_cell_value(text: str, *, unit_multiplier: int = 1) -> int | float | st
 
 
 def _safe_text(value: str) -> str:
-    if value[0] in "=+-@":
+    if value.startswith(("=", "+", "@")) or _NEGATIVE_FORMULA.match(value):
         return "'" + value
     return value

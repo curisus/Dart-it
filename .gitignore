@@ -20,3 +20,5 @@ output/
 *.pdf
 요청사항.md
 .codegraph
+.omc/
+.omo/

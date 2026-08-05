@@ -53,6 +53,33 @@ class DocumentSection:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceCoverage:
+    """Source-to-document counts and fingerprints for non-image content."""
+
+    source_text_token_count: int
+    captured_text_token_count: int
+    source_text_sha256: str
+    captured_text_sha256: str
+    source_table_count: int
+    captured_table_count: int
+    source_cell_count: int
+    captured_cell_count: int
+    source_image_count: int
+    captured_image_count: int
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every source item reached the normalized document."""
+        return (
+            self.source_text_token_count == self.captured_text_token_count
+            and self.source_text_sha256 == self.captured_text_sha256
+            and self.source_table_count == self.captured_table_count
+            and self.source_cell_count == self.captured_cell_count
+            and self.source_image_count == self.captured_image_count
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ParsedDocument:
     """Normalized document with source metadata."""
 
@@ -61,6 +88,7 @@ class ParsedDocument:
     source_type: str
     report_title: str | None = None
     report_date: str | None = None
+    source_coverage: SourceCoverage | None = None
 
 
 def build_document(
@@ -68,6 +96,7 @@ def build_document(
     *,
     content: bytes,
     source_type: str,
+    source_coverage: SourceCoverage | None = None,
 ) -> ParsedDocument:
     """Group ordered blocks into title-driven sections."""
     sections: list[DocumentSection] = []
@@ -119,6 +148,7 @@ def build_document(
         source_sha256=hashlib.sha256(content).hexdigest(),
         source_type=source_type,
         report_title=sections[0].title if sections else None,
+        source_coverage=source_coverage,
     )
 
 

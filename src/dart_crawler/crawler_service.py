@@ -98,7 +98,7 @@ class CrawlerService:
                 document.error
                 if document.error is not None
                 else _not_found("첨부문서 구조를 해석하지 못했습니다."),
-                warnings=attachments.warnings,
+                warnings=attachments.warnings + document.warnings,
                 next_action="다른 첨부문서를 선택하거나 DART 구조 변경을 확인하세요.",
             )
         comparison_warnings = _comparison_warnings(
@@ -129,7 +129,9 @@ class CrawlerService:
             parser_version="0.1.0",
             document=document.data,
             comparison_warnings=comparison_warnings,
-            collection_warnings=attachments.warnings + date_warning,
+            collection_warnings=(
+                attachments.warnings + document.warnings + date_warning
+            ),
         )
         exported = ExcelExportService(self._settings.output_dir).export(context)
         return _merge_warnings(exported, ())
