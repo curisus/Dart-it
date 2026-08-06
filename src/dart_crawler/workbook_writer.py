@@ -13,7 +13,7 @@ from dart_crawler.document_model import BlockKind, DocumentBlock
 from dart_crawler.document_validation import ValidationSummary
 from dart_crawler.result import WarningCode
 from dart_crawler.source_coverage import source_coverage_metadata
-from dart_crawler.value_parser import parse_cell_value
+from dart_crawler.value_parser import parse_cell_value, thousands_number_format
 from dart_crawler.workbook_validation import IMAGE_PLACEHOLDER, METADATA_SHEET
 
 if TYPE_CHECKING:
@@ -56,19 +56,14 @@ def _write_section(sheet: Worksheet, blocks: tuple[DocumentBlock, ...]) -> None:
     row_number = 1
     for block in blocks:
         if block.kind in {BlockKind.HEADING, BlockKind.PARAGRAPH}:
-            text_value = parse_cell_value(block.text)
-            if text_value != "":
-                sheet.cell(row=row_number, column=1, value=text_value)
+            if parse_cell_value(block.text) != "":
+                _write_cell(sheet, row_number, 1, block.text)
             row_number += 1
         elif block.kind is BlockKind.TABLE:
             table_start_row = row_number
             for source_row in block.rows:
                 for column_number, cell_text in enumerate(source_row, start=1):
-                    sheet.cell(
-                        row=row_number,
-                        column=column_number,
-                        value=parse_cell_value(cell_text),
-                    )
+                    _write_cell(sheet, row_number, column_number, cell_text)
                 row_number += 1
             for start_row, start_column, end_row, end_column in block.merged_ranges:
                 sheet.merge_cells(
@@ -80,6 +75,13 @@ def _write_section(sheet: Worksheet, blocks: tuple[DocumentBlock, ...]) -> None:
         elif block.kind is BlockKind.IMAGE:
             sheet.cell(row=row_number, column=1, value=IMAGE_PLACEHOLDER)
             row_number += 1
+
+
+def _write_cell(sheet: Worksheet, row: int, column: int, source_text: str) -> None:
+    cell = sheet.cell(row=row, column=column, value=parse_cell_value(source_text))
+    number_format = thousands_number_format(source_text)
+    if number_format is not None:
+        cell.number_format = number_format
 
 
 def _metadata(

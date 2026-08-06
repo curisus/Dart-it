@@ -153,6 +153,41 @@ def test_xml_parser_places_rowspan_cells_before_following_columns() -> None:
     assert table.merged_ranges == ((1, 1, 2, 1), (1, 2, 1, 3))
 
 
+def test_xml_parser_keeps_second_header_row_between_side_rowspans() -> None:
+    xml = b"""
+    <table>
+      <tr>
+        <th rowspan="2">G</th><th rowspan="2">N</th>
+        <th colspan="4">O</th>
+        <th rowspan="2">I</th><th rowspan="2">T</th>
+      </tr>
+      <tr><th>M1</th><th>M2</th><th>M3</th><th>M4</th></tr>
+      <tr>
+        <td>R</td><td>1</td><td>2</td><td>3</td>
+        <td>4</td><td>5</td><td>6</td><td>7</td>
+      </tr>
+    </table>
+    """
+
+    result = parse_xml_document(xml)
+
+    assert result.ok is True
+    assert result.data is not None
+    table = result.data.sections[0].blocks[0]
+    assert table.rows == (
+        ("G", "N", "O", "", "", "", "I", "T"),
+        ("", "", "M1", "M2", "M3", "M4", "", ""),
+        ("R", "1", "2", "3", "4", "5", "6", "7"),
+    )
+    assert table.merged_ranges == (
+        (1, 1, 2, 1),
+        (1, 2, 2, 2),
+        (1, 3, 1, 6),
+        (1, 7, 2, 7),
+        (1, 8, 2, 8),
+    )
+
+
 def test_xml_parser_preserves_same_visible_content_as_html() -> None:
     xml = b"""
     <document>

@@ -16,7 +16,7 @@ from dart_crawler.document_model import BlockKind, ParsedDocument
 from dart_crawler.document_validation import ValidationSummary
 from dart_crawler.result import ErrorCode, JsonValue, Result, error_info
 from dart_crawler.source_coverage import source_coverage_metadata
-from dart_crawler.value_parser import parse_cell_value
+from dart_crawler.value_parser import parse_cell_value, thousands_number_format
 
 METADATA_SHEET = "수집정보"
 IMAGE_PLACEHOLDER = "[이미지 내용 생략]"
@@ -42,6 +42,7 @@ class ValidationContext(Protocol):
 class _SheetExpectation:
     cells: dict[CellCoordinate, CellValue]
     merges: frozenset[str]
+    number_formats: dict[CellCoordinate, str]
 
 
 def validate_workbook(
@@ -177,6 +178,14 @@ def _validate_sheet(
                 expected=str(normalized_expected),
                 actual=str(cell.value),
             )
+    return _validate_swept_cells(sheet, expectation, summary)
+
+
+def _validate_swept_cells(
+    sheet: Worksheet,
+    expectation: _SheetExpectation,
+    summary: ValidationSummary,
+) -> Result[ValidationSummary]:
     for row_number, row in enumerate(sheet.iter_rows(), start=1):
         for column_number, cell in enumerate(row, start=1):
             if cell.data_type == "f":
@@ -186,6 +195,15 @@ def _validate_sheet(
                     cell=cell.coordinate,
                 )
             coordinate = (row_number, column_number)
+            expected_format = expectation.number_formats.get(coordinate, "General")
+            if cell.number_format != expected_format:
+                return _workbook_failure(
+                    "number_format_mismatch",
+                    sheet=sheet.title,
+                    cell=cell.coordinate,
+                    expected=expected_format,
+                    actual=str(cell.number_format),
+                )
             if coordinate in expectation.cells or cell.value is None:
                 continue
             expected_cell_value = _normalized_expected(
@@ -211,10 +229,12 @@ def _sheet_expectations(document: ParsedDocument) -> tuple[_SheetExpectation, ..
     for section in document.sections:
         cells: dict[CellCoordinate, CellValue] = {}
         merges: set[str] = set()
+        number_formats: dict[CellCoordinate, str] = {}
         row_number = 1
         for block in section.blocks:
             if block.kind in {BlockKind.HEADING, BlockKind.PARAGRAPH}:
                 cells[(row_number, 1)] = parse_cell_value(block.text)
+                _expect_number_format(number_formats, (row_number, 1), block.text)
                 row_number += 1
                 continue
             if block.kind is BlockKind.IMAGE:
@@ -227,15 +247,32 @@ def _sheet_expectations(document: ParsedDocument) -> tuple[_SheetExpectation, ..
             for source_row in block.rows:
                 for column_number, value in enumerate(source_row, start=1):
                     cells[(row_number, column_number)] = parse_cell_value(value)
+                    _expect_number_format(
+                        number_formats, (row_number, column_number), value
+                    )
                 row_number += 1
             for start_row, start_column, end_row, end_column in block.merged_ranges:
                 start = f"{get_column_letter(start_column)}{table_start_row + start_row - 1}"
                 end = f"{get_column_letter(end_column)}{table_start_row + end_row - 1}"
                 merges.add(f"{start}:{end}")
         expectations.append(
-            _SheetExpectation(cells=cells, merges=frozenset(merges))
+            _SheetExpectation(
+                cells=cells,
+                merges=frozenset(merges),
+                number_formats=number_formats,
+            )
         )
     return tuple(expectations)
+
+
+def _expect_number_format(
+    number_formats: dict[CellCoordinate, str],
+    coordinate: CellCoordinate,
+    source_text: str,
+) -> None:
+    number_format = thousands_number_format(source_text)
+    if number_format is not None:
+        number_formats[coordinate] = number_format
 
 
 def _workbook_failure(

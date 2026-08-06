@@ -4,8 +4,10 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from dart_crawler.document_model import ParsedDocument
+from dart_crawler.document_validation import validate_document
 from dart_crawler.excel_export import ExcelExportService, ExportContext
-from dart_crawler.value_parser import parse_cell_value
+from dart_crawler.value_parser import parse_cell_value, thousands_number_format
+from dart_crawler.workbook_validation import validate_workbook
 from dart_crawler.xml_parser import parse_xml_document
 
 
@@ -66,6 +68,35 @@ def test_value_parser_handles_commas_parentheses_and_formula_text() -> None:
     assert parse_cell_value("천원", unit_multiplier=1000) == "천원"
 
 
+def test_value_parser_keeps_note_number_lists_as_text() -> None:
+    assert parse_cell_value("26,34") == "26,34"
+    assert parse_cell_value("4,36") == "4,36"
+    assert parse_cell_value("4,34,36") == "4,34,36"
+    assert parse_cell_value(",123") == ",123"
+    assert parse_cell_value("12,3456") == "12,3456"
+    assert parse_cell_value("1000,000") == "1000,000"
+
+
+def test_value_parser_accepts_grouped_thousands_numbers() -> None:
+    assert parse_cell_value("1,234") == 1234
+    assert parse_cell_value("1,234,567") == 1234567
+    assert parse_cell_value("(112,071)") == -112071
+    assert parse_cell_value("1,234.56") == 1234.56
+    assert parse_cell_value("123,456") == 123456
+
+
+def test_thousands_number_format_follows_source_commas() -> None:
+    assert thousands_number_format("1,234") == "#,##0"
+    assert thousands_number_format("(112,071)") == "#,##0"
+    assert thousands_number_format("   1,000") == "#,##0"
+    assert thousands_number_format("1,234.56") == "#,##0.00"
+    assert thousands_number_format("1,234.5") == "#,##0.0"
+    assert thousands_number_format("352") is None
+    assert thousands_number_format("26,34") is None
+    assert thousands_number_format("합계") is None
+    assert thousands_number_format("") is None
+
+
 def test_value_parser_preserves_leading_indentation_for_text() -> None:
     assert parse_cell_value("   1. 현금및현금성자산") == "   1. 현금및현금성자산"
     assert parse_cell_value("\u00a0\u00a0계정") == "\u00a0\u00a0계정"
@@ -104,6 +135,111 @@ def test_export_preserves_blank_lines_and_indentation(tmp_path: Path) -> None:
     assert cash_flow["A4"].value is None
     assert cash_flow["A5"].value == "   들여쓴 문단"
     workbook.close()
+
+
+def _formatted_document() -> ParsedDocument:
+    return _parse_document(
+        "<document>"
+        "<heading>재무상태표</heading>"
+        "<table><tr><td>자산총계</td><td>1,234,567</td></tr>"
+        "<tr><td>손실충당금</td><td>(112,071)</td></tr>"
+        "<tr><td>주석번호</td><td>26,34</td></tr>"
+        "<tr><td>소액</td><td>352</td></tr>"
+        "<tr><td>비율</td><td>1,234.56</td></tr>"
+        "<tr><td>소수한자리</td><td>1,234.5</td></tr>"
+        '<tr><td>병합금액</td><td colspan="2" rowspan="2">9,876,543</td></tr>'
+        "<tr><td>다음행</td></tr></table>"
+        "<heading>손익 및 포괄손익계산서</heading>"
+        "<table><tr><td>매출</td><td>(10)</td></tr></table>"
+        "<heading>자본변동표</heading>"
+        "<table><tr><td>자본</td><td>5</td></tr></table>"
+        "<heading>현금흐름표</heading>"
+        "<table><tr><td>현금</td><td>6</td></tr></table>"
+        "</document>"
+    )
+
+
+def test_export_applies_thousands_display_format(tmp_path: Path) -> None:
+    result = ExcelExportService(tmp_path).export(_context(_formatted_document()))
+
+    assert result.ok is True
+    assert result.data is not None
+    workbook = load_workbook(result.data.output_path)
+    sheet = workbook["재무상태표"]
+    assert sheet["B2"].value == 1234567
+    assert sheet["B2"].number_format == "#,##0"
+    assert sheet["B3"].value == -112071
+    assert sheet["B3"].number_format == "#,##0"
+    assert sheet["B4"].value == "26,34"
+    assert sheet["B4"].number_format == "General"
+    assert sheet["B5"].value == 352
+    assert sheet["B5"].number_format == "General"
+    assert sheet["B6"].value == 1234.56
+    assert sheet["B6"].number_format == "#,##0.00"
+    assert sheet["B7"].value == 1234.5
+    assert sheet["B7"].number_format == "#,##0.0"
+    assert sheet["B8"].value == 9876543
+    assert sheet["B8"].number_format == "#,##0"
+    assert "B8:C9" in {str(item) for item in sheet.merged_cells.ranges}
+    workbook.close()
+
+
+def _revalidate(
+    document: ParsedDocument, path: Path
+) -> tuple[bool, str, str]:
+    summary = validate_document(document)
+    assert summary.ok is True
+    assert summary.data is not None
+    result = validate_workbook(
+        path,
+        _context(document),
+        collection_status="complete",
+        summary=summary.data,
+    )
+    if result.ok:
+        return True, "", ""
+    assert result.error is not None
+    return (
+        False,
+        str(result.error.details["issue"]),
+        str(result.error.details.get("cell", "")),
+    )
+
+
+def test_validate_workbook_rejects_missing_thousands_format(tmp_path: Path) -> None:
+    document = _formatted_document()
+    exported = ExcelExportService(tmp_path).export(_context(document))
+    assert exported.ok is True
+    assert exported.data is not None
+    path = exported.data.output_path
+    workbook = load_workbook(path)
+    workbook["재무상태표"]["B2"].number_format = "General"
+    workbook.save(path)
+    workbook.close()
+
+    ok, issue, cell = _revalidate(document, path)
+
+    assert ok is False
+    assert issue == "number_format_mismatch"
+    assert cell == "B2"
+
+
+def test_validate_workbook_rejects_unexpected_number_format(tmp_path: Path) -> None:
+    document = _formatted_document()
+    exported = ExcelExportService(tmp_path).export(_context(document))
+    assert exported.ok is True
+    assert exported.data is not None
+    path = exported.data.output_path
+    workbook = load_workbook(path)
+    workbook["재무상태표"]["A2"].number_format = "#,##0"
+    workbook.save(path)
+    workbook.close()
+
+    ok, issue, cell = _revalidate(document, path)
+
+    assert ok is False
+    assert issue == "number_format_mismatch"
+    assert cell == "A2"
 
 
 def test_export_writes_metadata_and_marks_mixed_image_section_partial(
