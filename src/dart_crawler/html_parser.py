@@ -49,6 +49,7 @@ class _HtmlBlockParser(HTMLParser):
         self._in_image_container = False
         self._image_content_depth = 0
         self._image_file_depth = 0
+        self._text_tag_block_count = 0
         self.captured_source_cell_count = 0
 
     def handle_starttag(
@@ -64,6 +65,7 @@ class _HtmlBlockParser(HTMLParser):
         if normalized in _HEADING_TAGS | _PARAGRAPH_TAGS:
             self._text_tag = normalized
             self._text_parts = []
+            self._text_tag_block_count = len(self.blocks)
             return
         if normalized == "br":
             self._append_text("\n")
@@ -110,6 +112,12 @@ class _HtmlBlockParser(HTMLParser):
                     else BlockKind.PARAGRAPH
                 )
                 self.blocks.append(DocumentBlock(kind, text=text))
+            elif (
+                self.blocks
+                and not self._table_depth
+                and len(self.blocks) == self._text_tag_block_count
+            ):
+                self.blocks.append(DocumentBlock(BlockKind.PARAGRAPH, text=""))
             self._text_tag = None
             self._text_parts = []
 
@@ -253,8 +261,26 @@ def parse_html_document(
     )
 
 
+_INDENT_CHARS: Final = " \t\u00a0\u3000"
+
+
+_MARKUP_INDENT_CHARS: Final = " \t"
+
+
 def _clean(parts: Sequence[str]) -> str:
-    return " ".join(" ".join(parts).split())
+    body = " ".join(" ".join(parts).split())
+    if not body:
+        return ""
+    return _leading_indent("".join(parts)) + body
+
+
+def _leading_indent(raw: str) -> str:
+    without_indent = raw.lstrip(_INDENT_CHARS)
+    if without_indent[:1] not in {"\n", "\r"}:
+        return raw[: len(raw) - len(without_indent)]
+    whitespace_length = len(raw) - len(raw.lstrip(_INDENT_CHARS + "\r\n"))
+    leading_lines = raw[:whitespace_length].replace("\r", "\n")
+    return leading_lines.rsplit("\n", maxsplit=1)[-1].lstrip(_MARKUP_INDENT_CHARS)
 
 
 def _positive_span(value: str | None) -> int:

@@ -212,6 +212,171 @@ def test_xml_parser_preserves_cdata_and_includes_it_in_coverage() -> None:
     assert coverage.source_text_token_count == 5
 
 
+def test_html_parser_preserves_leading_indentation_in_text_blocks() -> None:
+    html = (
+        "<document>"
+        "<p>   들여쓴 문단</p>"
+        "<p>\u00a0\u00a0비분리공백 들여쓰기</p>"
+        "<heading>  들여쓴 제목</heading>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    first_blocks = result.data.sections[0].blocks
+    assert first_blocks[0].text == "   들여쓴 문단"
+    assert first_blocks[1].text == "\u00a0\u00a0비분리공백 들여쓰기"
+    heading_section = result.data.sections[1]
+    assert heading_section.title == "들여쓴 제목"
+    assert heading_section.blocks[0].kind is BlockKind.HEADING
+    assert heading_section.blocks[0].text == "  들여쓴 제목"
+
+
+def test_html_parser_keeps_blank_paragraphs_as_blank_line_blocks() -> None:
+    html = (
+        "<document>"
+        "<p>첫 문단</p>"
+        "<p></p>"
+        "<p> </p>"
+        "<p>\u00a0</p>"
+        "<p>마지막 문단</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert [(block.kind, block.text) for block in blocks] == [
+        (BlockKind.PARAGRAPH, "첫 문단"),
+        (BlockKind.PARAGRAPH, ""),
+        (BlockKind.PARAGRAPH, ""),
+        (BlockKind.PARAGRAPH, ""),
+        (BlockKind.PARAGRAPH, "마지막 문단"),
+    ]
+    coverage = result.data.source_coverage
+    assert coverage is not None
+    assert coverage.complete is True
+
+
+def test_html_parser_skips_blank_paragraphs_before_first_content() -> None:
+    html = b"<document><p></p><p>Body</p></document>"
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert [(block.kind, block.text) for block in blocks] == [
+        (BlockKind.PARAGRAPH, "Body"),
+    ]
+
+
+def test_html_parser_preserves_leading_indentation_in_table_cells() -> None:
+    html = "<table><tr><td>   1. 현금및현금성자산</td><td>1,000</td></tr></table>".encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    table = result.data.sections[0].blocks[0]
+    assert table.rows == (("   1. 현금및현금성자산", "1,000"),)
+
+
+def test_html_parser_does_not_emit_blank_blocks_for_paragraphs_inside_tables() -> None:
+    html = (
+        b"<table>"
+        b"<p>table caption</p>"
+        b"<tr><td><p>cell text</p><p></p></td><td>2</td></tr>"
+        b"</table>"
+    )
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert [block.kind for block in blocks] == [
+        BlockKind.PARAGRAPH,
+        BlockKind.TABLE,
+    ]
+    assert blocks[0].text == "table caption"
+    assert blocks[1].rows == (("cell text", "2"),)
+
+
+def test_html_parser_ignores_markup_newline_indentation() -> None:
+    html = b"<document><p>\n      Wrapped markup line</p></document>"
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.sections[0].blocks[0].text == "Wrapped markup line"
+
+
+def test_html_parser_does_not_invent_indentation_from_markup_gaps() -> None:
+    html = (
+        "<document>"
+        "<p>\u3000\u3000<span>당사는</span></p>"
+        "<table><tr><td> <p>매출액</p> </td><td>10</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert blocks[0].text == "\u3000\u3000당사는"
+    assert blocks[1].rows == ((" 매출액", "10"),)
+
+
+def test_html_parser_keeps_author_indentation_after_markup_newline() -> None:
+    html = "<document><p>\n\u3000\u3000당사는 다음과 같습니다.\n</p></document>".encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.sections[0].blocks[0].text == "\u3000\u3000당사는 다음과 같습니다."
+
+
+def test_html_parser_does_not_emit_blank_for_image_only_paragraph() -> None:
+    html = b'<document><p>Body</p><p><img src="a.png"/></p></document>'
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert [(block.kind, block.text) for block in blocks] == [
+        (BlockKind.PARAGRAPH, "Body"),
+        (BlockKind.IMAGE, ""),
+    ]
+
+
+def test_note_sections_split_on_indented_note_headings() -> None:
+    html = (
+        "<document>"
+        "<heading>주석</heading>"
+        "<p> 1. 일반사항</p>"
+        "<p>내용</p>"
+        "<p> 2. 중요한 회계처리방침</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    titles = [section.title for section in result.data.sections]
+    assert "주석 1" in titles
+    assert "주석 2" in titles
+
+
 def test_html_parser_uses_same_document_block_shape() -> None:
     html = """
     <html><body>

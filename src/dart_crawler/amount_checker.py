@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 
 from dart_crawler.api_models import FinancialAccount
@@ -36,32 +37,41 @@ def compare_statement_amounts(
             if block.kind is not BlockKind.TABLE:
                 continue
             for row in block.rows:
-                if len(row) < 2 or row[0] not in official:
-                    continue
-                source_value = _numeric(row[1])
-                official_value = _numeric(official[row[0]].thstrm_amount)
-                if source_value is None or official_value is None:
-                    warnings.append(
-                        WarningInfo(
-                            code=WarningCode.COMPARISON_UNAVAILABLE,
-                            message="계정의 숫자 연결을 확인하지 못했습니다.",
-                            details={"account_name": row[0]},
-                        )
-                    )
-                    continue
-                if source_value != official_value:
-                    warnings.append(
-                        WarningInfo(
-                            code=WarningCode.AMOUNT_MISMATCH,
-                            message="원문 금액과 OpenDART 비교 금액이 다릅니다.",
-                            details={
-                                "account_name": row[0],
-                                "source_value": row[1],
-                                "official_value": official[row[0]].thstrm_amount,
-                            },
-                        )
-                    )
+                warning = _row_warning(row, official)
+                if warning is not None:
+                    warnings.append(warning)
     return tuple(warnings)
+
+
+def _row_warning(
+    row: tuple[str, ...],
+    official: Mapping[str, FinancialAccount],
+) -> WarningInfo | None:
+    if len(row) < 2:
+        return None
+    account_name = row[0].strip()
+    account = official.get(account_name)
+    if account is None:
+        return None
+    source_value = _numeric(row[1])
+    official_value = _numeric(account.thstrm_amount)
+    if source_value is None or official_value is None:
+        return WarningInfo(
+            code=WarningCode.COMPARISON_UNAVAILABLE,
+            message="계정의 숫자 연결을 확인하지 못했습니다.",
+            details={"account_name": account_name},
+        )
+    if source_value != official_value:
+        return WarningInfo(
+            code=WarningCode.AMOUNT_MISMATCH,
+            message="원문 금액과 OpenDART 비교 금액이 다릅니다.",
+            details={
+                "account_name": account_name,
+                "source_value": row[1],
+                "official_value": account.thstrm_amount,
+            },
+        )
+    return None
 
 
 def _numeric(value: str) -> Decimal | None:

@@ -110,6 +110,14 @@ def _validate_metadata(
     collection_status: str,
     summary: ValidationSummary,
 ) -> Result[ValidationSummary]:
+    for row in workbook[METADATA_SHEET].iter_rows():
+        for cell in row:
+            if cell.data_type == "f":
+                return _workbook_failure(
+                    "formula_cell_detected",
+                    sheet=METADATA_SHEET,
+                    cell=cell.coordinate,
+                )
     metadata = {
         str(row[0].value): str(row[1].value)
         for row in workbook[METADATA_SHEET].iter_rows(min_col=1, max_col=2)

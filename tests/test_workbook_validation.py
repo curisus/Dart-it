@@ -131,6 +131,43 @@ def test_validate_document_rejects_fingerprint_mismatch_with_equal_counts() -> N
     assert result.error.details["issue"] == "incomplete_source_coverage"
 
 
+def test_validate_workbook_rejects_formula_in_metadata_sheet(tmp_path: Path) -> None:
+    parsed = parse_html_document(b"<heading>Header</heading><p>Tail</p>")
+    assert parsed.ok is True
+    assert parsed.data is not None
+    validation = validate_document(parsed.data)
+    assert validation.ok is True
+    assert validation.data is not None
+    context = _ValidationContext(
+        rcept_no="20260310000001",
+        attachment_id="opendart:20260310000001:audit.xml",
+        document=parsed.data,
+    )
+    path = tmp_path / "formula_metadata.xlsx"
+    workbook = Workbook()
+    metadata = workbook.worksheets[0]
+    metadata.title = "수집정보"
+    metadata.append(("rcept_no", context.rcept_no))
+    metadata.append(("evil", "=1+1"))
+    content = workbook.create_sheet("Header")
+    content["A1"] = "Header"
+    content["A2"] = "Tail"
+    workbook.save(path)
+    workbook.close()
+
+    result = validate_workbook(
+        path,
+        context,
+        collection_status="complete",
+        summary=validation.data,
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.details["issue"] == "formula_cell_detected"
+    assert result.error.details["sheet"] == "수집정보"
+
+
 def test_validate_workbook_rejects_missing_final_expected_cell(tmp_path: Path) -> None:
     parsed = parse_html_document(b"<heading>Header</heading><p>Tail</p>")
     assert parsed.ok is True

@@ -53,3 +53,22 @@ def test_amount_checker_reports_unavailable_comparison() -> None:
     warnings = compare_statement_amounts(_document("100"), ())
 
     assert warnings[0].code.value == "COMPARISON_UNAVAILABLE"
+
+
+def test_amount_checker_matches_indented_account_names() -> None:
+    document = ParsedDocument(
+        sections=(
+            DocumentSection(
+                title="재무상태표",
+                kind=SectionKind.BALANCE_SHEET,
+                blocks=(DocumentBlock(BlockKind.TABLE, rows=(("   자산", "100"),)),),
+            ),
+        ),
+        source_sha256="a" * 64,
+        source_type="xml",
+    )
+
+    warnings = compare_statement_amounts(document, (_account("90"),))
+
+    assert [warning.code.value for warning in warnings] == ["AMOUNT_MISMATCH"]
+    assert warnings[0].details["account_name"] == "자산"

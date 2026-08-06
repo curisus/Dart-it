@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openpyxl import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
 from dart_crawler.document_model import BlockKind, DocumentBlock
 from dart_crawler.document_validation import ValidationSummary
@@ -36,32 +37,7 @@ def write_workbook(
     for section in context.document.sections:
         sheet_name = _sheet_name(section.title, used_names)
         used_names.add(sheet_name)
-        sheet = workbook.create_sheet(sheet_name)
-        row_number = 1
-        for block in section.blocks:
-            if block.kind in {BlockKind.HEADING, BlockKind.PARAGRAPH}:
-                sheet.cell(row=row_number, column=1, value=parse_cell_value(block.text))
-                row_number += 1
-            elif block.kind is BlockKind.TABLE:
-                table_start_row = row_number
-                for source_row in block.rows:
-                    for column_number, value in enumerate(source_row, start=1):
-                        sheet.cell(
-                            row=row_number,
-                            column=column_number,
-                            value=parse_cell_value(value),
-                        )
-                    row_number += 1
-                for start_row, start_column, end_row, end_column in block.merged_ranges:
-                    sheet.merge_cells(
-                        start_row=table_start_row + start_row - 1,
-                        start_column=start_column,
-                        end_row=table_start_row + end_row - 1,
-                        end_column=end_column,
-                    )
-            elif block.kind is BlockKind.IMAGE:
-                sheet.cell(row=row_number, column=1, value=IMAGE_PLACEHOLDER)
-                row_number += 1
+        _write_section(workbook.create_sheet(sheet_name), section.blocks)
     with tempfile.NamedTemporaryFile(
         dir=path.parent,
         prefix=f".{path.stem}.",
@@ -74,6 +50,36 @@ def write_workbook(
         os.replace(temporary_path, path)
     finally:
         temporary_path.unlink(missing_ok=True)
+
+
+def _write_section(sheet: Worksheet, blocks: tuple[DocumentBlock, ...]) -> None:
+    row_number = 1
+    for block in blocks:
+        if block.kind in {BlockKind.HEADING, BlockKind.PARAGRAPH}:
+            text_value = parse_cell_value(block.text)
+            if text_value != "":
+                sheet.cell(row=row_number, column=1, value=text_value)
+            row_number += 1
+        elif block.kind is BlockKind.TABLE:
+            table_start_row = row_number
+            for source_row in block.rows:
+                for column_number, cell_text in enumerate(source_row, start=1):
+                    sheet.cell(
+                        row=row_number,
+                        column=column_number,
+                        value=parse_cell_value(cell_text),
+                    )
+                row_number += 1
+            for start_row, start_column, end_row, end_column in block.merged_ranges:
+                sheet.merge_cells(
+                    start_row=table_start_row + start_row - 1,
+                    start_column=start_column,
+                    end_row=table_start_row + end_row - 1,
+                    end_column=end_column,
+                )
+        elif block.kind is BlockKind.IMAGE:
+            sheet.cell(row=row_number, column=1, value=IMAGE_PLACEHOLDER)
+            row_number += 1
 
 
 def _metadata(

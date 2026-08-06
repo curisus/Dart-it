@@ -9,10 +9,11 @@ _NUMBER = re.compile(r"^\(?[+-]?\d+(?:\.\d+)?\)?$")
 _NEGATIVE_FORMULA = re.compile(
     r"^-[ \t]*(?:[A-Za-z_$][A-Za-z0-9_.$]*\s*\(|\$?[A-Z]{1,3}\$?\d+)"
 )
+_LEADING_INDENT = re.compile(r"^[ \t\u00a0\u3000]+")
 
 
 def parse_cell_value(text: str, *, unit_multiplier: int = 1) -> int | float | str:
-    """Parse clear amounts while keeping ambiguous external text as text."""
+    """Parse clear amounts while keeping indented external text as text."""
     normalized = text.strip()
     if not normalized:
         return ""
@@ -28,6 +29,9 @@ def parse_cell_value(text: str, *, unit_multiplier: int = 1) -> int | float | st
         if number == number.to_integral_value():
             return int(number)
         return float(number)
+    indent = _LEADING_INDENT.match(text)
+    if indent is not None:
+        return indent.group() + normalized
     return _safe_text(normalized)
 
 

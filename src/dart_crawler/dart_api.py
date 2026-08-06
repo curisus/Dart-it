@@ -214,7 +214,7 @@ class DartApi:
                     if document.error is not None
                     else error_info(
                         ErrorCode.UPSTREAM_UNAVAILABLE,
-                        "DART viewer 臾몄꽌瑜??섏쭛?????놁뒿?덈떎.",
+                        "DART viewer 문서를 수집할 수 없습니다.",
                         retryable=True,
                     )
                 )
@@ -224,7 +224,7 @@ class DartApi:
             return Result.failure(
                 error_info(
                     ErrorCode.UPSTREAM_LAYOUT_CHANGED,
-                    "DART viewer 臾몄꽌 援ъ“瑜??댁꽍?????놁뒿?덈떎.",
+                    "DART viewer 문서 구조를 해석할 수 없습니다.",
                     retryable=False,
                 )
             )

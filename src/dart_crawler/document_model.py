@@ -206,7 +206,7 @@ def _split_note_sections(
         current_blocks: list[DocumentBlock] = []
         for block in section.blocks:
             text = block.text if block.kind is not BlockKind.TABLE else ""
-            match = note_pattern.match(text)
+            match = note_pattern.match(text.lstrip())
             if match is not None:
                 if current_blocks:
                     result.append(

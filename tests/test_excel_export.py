@@ -66,6 +66,46 @@ def test_value_parser_handles_commas_parentheses_and_formula_text() -> None:
     assert parse_cell_value("천원", unit_multiplier=1000) == "천원"
 
 
+def test_value_parser_preserves_leading_indentation_for_text() -> None:
+    assert parse_cell_value("   1. 현금및현금성자산") == "   1. 현금및현금성자산"
+    assert parse_cell_value("\u00a0\u00a0계정") == "\u00a0\u00a0계정"
+    assert parse_cell_value("   1,000") == 1000
+    assert parse_cell_value("   ") == ""
+    assert parse_cell_value("들여쓰기없음  ") == "들여쓰기없음"
+    assert parse_cell_value(" =SUM(A1:A2)") == " =SUM(A1:A2)"
+
+
+def test_export_preserves_blank_lines_and_indentation(tmp_path: Path) -> None:
+    document = _parse_document(
+        "<document>"
+        "<heading>재무상태표</heading>"
+        "<table><tr><td>   1. 현금및현금성자산</td><td>1,000</td></tr></table>"
+        "<heading>손익 및 포괄손익계산서</heading>"
+        "<table><tr><td>매출</td><td>(10)</td></tr></table>"
+        "<heading>자본변동표</heading>"
+        "<table><tr><td>자본</td><td>5</td></tr></table>"
+        "<heading>현금흐름표</heading>"
+        "<table><tr><td>현금</td><td>6</td></tr></table>"
+        "<p>영업활동 설명</p>"
+        "<p></p>"
+        "<p>   들여쓴 문단</p>"
+        "</document>"
+    )
+
+    result = ExcelExportService(tmp_path).export(_context(document))
+
+    assert result.ok is True
+    assert result.data is not None
+    workbook = load_workbook(result.data.output_path)
+    balance_sheet = workbook["재무상태표"]
+    assert balance_sheet["A2"].value == "   1. 현금및현금성자산"
+    cash_flow = workbook["현금흐름표"]
+    assert cash_flow["A3"].value == "영업활동 설명"
+    assert cash_flow["A4"].value is None
+    assert cash_flow["A5"].value == "   들여쓴 문단"
+    workbook.close()
+
+
 def test_export_writes_metadata_and_marks_mixed_image_section_partial(
     tmp_path: Path,
 ) -> None:
