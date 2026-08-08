@@ -22,3 +22,6 @@ output/
 .codegraph
 .omc/
 .omo/
+CLAUDE.md
+feedbacks/
+.claude/
