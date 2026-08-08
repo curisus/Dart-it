@@ -7,6 +7,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum, unique
+from typing import Final
 
 
 @unique
@@ -30,6 +31,16 @@ class SectionKind(StrEnum):
     CASH_FLOW = "cash_flow"
     NOTE = "note"
     OTHER = "other"
+
+
+_STATEMENT_KINDS: Final = frozenset(
+    {
+        SectionKind.BALANCE_SHEET,
+        SectionKind.INCOME,
+        SectionKind.EQUITY,
+        SectionKind.CASH_FLOW,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,46 +113,36 @@ def build_document(
     sections: list[DocumentSection] = []
     current_title = "본문"
     current_blocks: list[DocumentBlock] = []
+    seen_kinds: set[SectionKind] = set()
     for block in blocks:
+        within_note = classify_section(current_title) is SectionKind.NOTE
         inferred_title = _infer_table_title(block)
         if (
             inferred_title is not None
             and current_blocks
+            and not _stays_inside_note(
+                inferred_title, seen_kinds, within_note=within_note
+            )
             and (
                 classify_section(current_title) is SectionKind.OTHER
                 or classify_section(inferred_title)
                 is not classify_section(current_title)
             )
         ):
-            sections.append(
-                DocumentSection(
-                    title=current_title,
-                    kind=classify_section(current_title),
-                    blocks=tuple(current_blocks),
-                )
-            )
+            _close_section(sections, seen_kinds, current_title, current_blocks)
             current_blocks = []
             current_title = inferred_title
-        if block.kind is BlockKind.HEADING and block.text.strip() and current_blocks:
-            sections.append(
-                DocumentSection(
-                    title=current_title,
-                    kind=classify_section(current_title),
-                    blocks=tuple(current_blocks),
-                )
-            )
-            current_blocks = []
-        if block.kind is BlockKind.HEADING and block.text.strip():
-            current_title = block.text.strip()
+        heading_title = _section_heading_title(
+            block, seen_kinds, within_note=within_note
+        )
+        if heading_title is not None:
+            if current_blocks:
+                _close_section(sections, seen_kinds, current_title, current_blocks)
+                current_blocks = []
+            current_title = heading_title
         current_blocks.append(block)
     if current_blocks:
-        sections.append(
-            DocumentSection(
-                title=current_title,
-                kind=classify_section(current_title),
-                blocks=tuple(current_blocks),
-            )
-        )
+        _close_section(sections, seen_kinds, current_title, current_blocks)
     sections = _split_note_sections(sections)
     return ParsedDocument(
         sections=tuple(sections),
@@ -172,6 +173,58 @@ def classify_section(title: str) -> SectionKind:
     ):
         return SectionKind.OPINION
     return SectionKind.OTHER
+
+
+def _close_section(
+    sections: list[DocumentSection],
+    seen_kinds: set[SectionKind],
+    title: str,
+    blocks: list[DocumentBlock],
+) -> None:
+    """Append a finished section and record kinds that carry a real table.
+
+    Only table-bearing sections count, matching what core-statement checks
+    require, so a title alone can never mask a statement that is still coming.
+    """
+    section = DocumentSection(
+        title=title,
+        kind=classify_section(title),
+        blocks=tuple(blocks),
+    )
+    sections.append(section)
+    if any(block.kind is BlockKind.TABLE for block in section.blocks):
+        seen_kinds.add(section.kind)
+
+
+def _stays_inside_note(
+    title: str,
+    seen_kinds: set[SectionKind],
+    *,
+    within_note: bool,
+) -> bool:
+    """Whether a statement title repeats inside a note instead of opening a sheet.
+
+    Suppression needs an earlier section of the same kind that already holds a
+    table, so it can never hide a core statement; only a later repeat inside a
+    note is folded back into that note.
+    """
+    kind = classify_section(title)
+    return within_note and kind in _STATEMENT_KINDS and kind in seen_kinds
+
+
+def _section_heading_title(
+    block: DocumentBlock,
+    seen_kinds: set[SectionKind],
+    *,
+    within_note: bool,
+) -> str | None:
+    """Return the title a heading starts, or None when it stays inside a note."""
+    if block.kind is not BlockKind.HEADING:
+        return None
+    title = block.text.strip()
+    if not title or _stays_inside_note(title, seen_kinds, within_note=within_note):
+        return None
+    return title
 
 
 def _infer_table_title(block: DocumentBlock) -> str | None:
