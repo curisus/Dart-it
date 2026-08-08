@@ -13,6 +13,7 @@ from dart_crawler.document_model import (
 )
 from dart_crawler.document_validation import validate_document
 from dart_crawler.html_parser import parse_html_document
+from dart_crawler.workbook_layout import apply_workbook_layout
 from dart_crawler.workbook_validation import validate_workbook
 
 
@@ -212,6 +213,7 @@ def test_validate_workbook_rejects_missing_final_expected_cell(tmp_path: Path) -
         metadata.append((key, value))
     content = workbook.create_sheet("Header")
     content["A1"] = "Header"
+    apply_workbook_layout(workbook)
     workbook.save(path)
     workbook.close()
 

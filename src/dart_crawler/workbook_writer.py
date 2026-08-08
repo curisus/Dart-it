@@ -14,6 +14,7 @@ from dart_crawler.document_validation import ValidationSummary
 from dart_crawler.result import WarningCode
 from dart_crawler.source_coverage import source_coverage_metadata
 from dart_crawler.value_parser import parse_cell_value, thousands_number_format
+from dart_crawler.workbook_layout import apply_workbook_layout
 from dart_crawler.workbook_validation import IMAGE_PLACEHOLDER, METADATA_SHEET
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ def write_workbook(
         sheet_name = _sheet_name(section.title, used_names)
         used_names.add(sheet_name)
         _write_section(workbook.create_sheet(sheet_name), section.blocks)
+    apply_workbook_layout(workbook)
     with tempfile.NamedTemporaryFile(
         dir=path.parent,
         prefix=f".{path.stem}.",

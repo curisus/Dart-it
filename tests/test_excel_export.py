@@ -1,7 +1,9 @@
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from openpyxl import load_workbook
+from openpyxl.styles import Alignment
 
 from dart_crawler.document_model import ParsedDocument
 from dart_crawler.document_validation import validate_document
@@ -240,6 +242,134 @@ def test_validate_workbook_rejects_unexpected_number_format(tmp_path: Path) -> N
     assert ok is False
     assert issue == "number_format_mismatch"
     assert cell == "A2"
+
+
+def test_export_centers_merged_cells_and_sizes_columns(tmp_path: Path) -> None:
+    result = ExcelExportService(tmp_path).export(_context(_formatted_document()))
+
+    assert result.ok is True
+    assert result.data is not None
+    workbook = load_workbook(result.data.output_path)
+    sheet = workbook["재무상태표"]
+    anchor = sheet["B8"]
+    assert anchor.alignment.horizontal == "center"
+    assert anchor.alignment.vertical == "center"
+    assert anchor.alignment.wrap_text is True
+    assert sheet.column_dimensions["A"].width == pytest.approx(12.0, abs=0.05)
+    assert sheet.column_dimensions["B"].width == pytest.approx(11.0, abs=0.05)
+    assert workbook["수집정보"].column_dimensions["A"].width is not None
+    workbook.close()
+
+
+def _long_text_document() -> ParsedDocument:
+    long_text = "가" * 80
+    return _parse_document(
+        "<document>"
+        "<heading>재무상태표</heading>"
+        "<table><tr><td>자산</td><td>1,000</td></tr></table>"
+        "<heading>손익 및 포괄손익계산서</heading>"
+        "<table><tr><td>매출</td><td>(10)</td></tr></table>"
+        "<heading>자본변동표</heading>"
+        "<table><tr><td>자본</td><td>5</td></tr></table>"
+        "<heading>현금흐름표</heading>"
+        "<table><tr><td>현금</td><td>6</td></tr></table>"
+        f"<p>{long_text}</p>"
+        "</document>"
+    )
+
+
+def test_export_wraps_long_text_and_caps_column_width(tmp_path: Path) -> None:
+    result = ExcelExportService(tmp_path).export(_context(_long_text_document()))
+
+    assert result.ok is True
+    assert result.data is not None
+    workbook = load_workbook(result.data.output_path)
+    sheet = workbook["현금흐름표"]
+    assert sheet["A3"].value == "가" * 80
+    assert sheet["A3"].alignment.wrap_text is True
+    assert sheet.column_dimensions["A"].width == pytest.approx(62.0, abs=0.05)
+    workbook.close()
+
+
+def test_validate_workbook_rejects_uncentered_merged_cell(tmp_path: Path) -> None:
+    document = _formatted_document()
+    exported = ExcelExportService(tmp_path).export(_context(document))
+    assert exported.ok is True
+    assert exported.data is not None
+    path = exported.data.output_path
+    workbook = load_workbook(path)
+    workbook["재무상태표"]["B8"].alignment = Alignment()
+    workbook.save(path)
+    workbook.close()
+
+    ok, issue, cell = _revalidate(document, path)
+
+    assert ok is False
+    assert issue == "merge_alignment_mismatch"
+    assert cell == "B8"
+
+
+def test_validate_workbook_rejects_narrowed_column_width(tmp_path: Path) -> None:
+    document = _formatted_document()
+    exported = ExcelExportService(tmp_path).export(_context(document))
+    assert exported.ok is True
+    assert exported.data is not None
+    path = exported.data.output_path
+    workbook = load_workbook(path)
+    workbook["재무상태표"].column_dimensions["B"].width = 4
+    workbook.save(path)
+    workbook.close()
+
+    ok, issue, _cell = _revalidate(document, path)
+
+    assert ok is False
+    assert issue == "column_width_mismatch"
+
+
+def test_validate_workbook_rejects_deleted_column_width(tmp_path: Path) -> None:
+    document = _parse_document(
+        "<document>"
+        "<heading>재무상태표</heading>"
+        "<table><tr><td>자산</td><td>12345678901</td></tr></table>"
+        "<heading>손익 및 포괄손익계산서</heading>"
+        "<table><tr><td>매출</td><td>(10)</td></tr></table>"
+        "<heading>자본변동표</heading>"
+        "<table><tr><td>자본</td><td>5</td></tr></table>"
+        "<heading>현금흐름표</heading>"
+        "<table><tr><td>현금</td><td>6</td></tr></table>"
+        "</document>"
+    )
+    exported = ExcelExportService(tmp_path).export(_context(document))
+    assert exported.ok is True
+    assert exported.data is not None
+    path = exported.data.output_path
+    workbook = load_workbook(path)
+    del workbook["재무상태표"].column_dimensions["B"]
+    workbook.save(path)
+    workbook.close()
+
+    ok, issue, _cell = _revalidate(document, path)
+
+    assert ok is False
+    assert issue == "column_width_mismatch"
+
+
+def test_validate_workbook_rejects_missing_text_wrap(tmp_path: Path) -> None:
+    document = _long_text_document()
+    exported = ExcelExportService(tmp_path).export(_context(document))
+    assert exported.ok is True
+    assert exported.data is not None
+    path = exported.data.output_path
+    workbook = load_workbook(path)
+    workbook["현금흐름표"]["A3"].alignment = Alignment()
+    workbook.save(path)
+    workbook.close()
+
+    ok, issue, cell = _revalidate(document, path)
+
+    assert ok is False
+    assert issue == "text_wrap_missing"
+    assert cell == "A3"
 
 
 def test_export_writes_metadata_and_marks_mixed_image_section_partial(

@@ -17,6 +17,7 @@ from dart_crawler.document_validation import ValidationSummary
 from dart_crawler.result import ErrorCode, JsonValue, Result, error_info
 from dart_crawler.source_coverage import source_coverage_metadata
 from dart_crawler.value_parser import parse_cell_value, thousands_number_format
+from dart_crawler.workbook_layout import compute_sheet_layout
 
 METADATA_SHEET = "수집정보"
 IMAGE_PLACEHOLDER = "[이미지 내용 생략]"
@@ -72,6 +73,9 @@ def validate_workbook(
         )
         if not metadata_validation.ok:
             return metadata_validation
+        metadata_layout = _validate_layout(workbook[METADATA_SHEET], summary)
+        if not metadata_layout.ok:
+            return metadata_layout
         for sheet_name, expectation in zip(
             workbook.sheetnames[1:], expected_sheets, strict=True
         ):
@@ -178,7 +182,10 @@ def _validate_sheet(
                 expected=str(normalized_expected),
                 actual=str(cell.value),
             )
-    return _validate_swept_cells(sheet, expectation, summary)
+    swept_validation = _validate_swept_cells(sheet, expectation, summary)
+    if not swept_validation.ok:
+        return swept_validation
+    return _validate_layout(sheet, summary)
 
 
 def _validate_swept_cells(
@@ -217,6 +224,54 @@ def _validate_swept_cells(
                     expected=str(expected_cell_value),
                     actual=str(cell.value),
                 )
+    return Result.success(summary)
+
+
+_WIDTH_TOLERANCE = 0.05
+
+
+def _validate_layout(
+    sheet: Worksheet,
+    summary: ValidationSummary,
+) -> Result[ValidationSummary]:
+    """Confirm the saved sheet keeps the layout recomputed from its contents."""
+    layout = compute_sheet_layout(sheet)
+    for column_letter, expected_width in layout.column_widths.items():
+        actual_width = (
+            sheet.column_dimensions[column_letter].width
+            if column_letter in sheet.column_dimensions
+            else None
+        )
+        if (
+            actual_width is None
+            or abs(actual_width - expected_width) > _WIDTH_TOLERANCE
+        ):
+            return _workbook_failure(
+                "column_width_mismatch",
+                sheet=sheet.title,
+                column=column_letter,
+                expected=expected_width,
+                actual=0.0 if actual_width is None else actual_width,
+            )
+    for row_number, column_number in sorted(layout.merge_anchors):
+        alignment = sheet.cell(row=row_number, column=column_number).alignment
+        if (
+            alignment.horizontal != "center"
+            or alignment.vertical != "center"
+            or not alignment.wrap_text
+        ):
+            return _workbook_failure(
+                "merge_alignment_mismatch",
+                sheet=sheet.title,
+                cell=f"{get_column_letter(column_number)}{row_number}",
+            )
+    for row_number, column_number in sorted(layout.wrapped_cells):
+        if not sheet.cell(row=row_number, column=column_number).alignment.wrap_text:
+            return _workbook_failure(
+                "text_wrap_missing",
+                sheet=sheet.title,
+                cell=f"{get_column_letter(column_number)}{row_number}",
+            )
     return Result.success(summary)
 
 
