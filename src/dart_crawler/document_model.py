@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import Final
@@ -41,6 +41,23 @@ _STATEMENT_KINDS: Final = frozenset(
         SectionKind.CASH_FLOW,
     }
 )
+
+_STATEMENT_TITLES: Final = (
+    "재무상태표",
+    "손익 및 포괄손익계산서",
+    "손익계산서",
+    "포괄손익계산서",
+    "자본변동표",
+    "현금흐름표",
+)
+
+_TITLE_SCOPES: Final = ("", "연결", "별도")
+
+_TITLE_LINES: Final = {
+    scope + "".join(title.split()): title
+    for title in _STATEMENT_TITLES
+    for scope in _TITLE_SCOPES
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,9 +131,10 @@ def build_document(
     current_title = "본문"
     current_blocks: list[DocumentBlock] = []
     seen_kinds: set[SectionKind] = set()
-    for block in blocks:
+    ordered = tuple(blocks)
+    for position, block in enumerate(ordered):
         within_note = classify_section(current_title) is SectionKind.NOTE
-        inferred_title = _infer_table_title(block)
+        inferred_title = _infer_section_title(block, ordered, position + 1)
         if (
             inferred_title is not None
             and current_blocks
@@ -227,20 +245,42 @@ def _section_heading_title(
     return title
 
 
-def _infer_table_title(block: DocumentBlock) -> str | None:
-    if block.kind is not BlockKind.TABLE:
+def _infer_section_title(
+    block: DocumentBlock,
+    ordered: Sequence[DocumentBlock],
+    next_position: int,
+) -> str | None:
+    """Return the statement a table header or a standalone title line announces."""
+    if block.kind is BlockKind.TABLE:
+        return _title_from_rows(block.rows)
+    if block.kind is not BlockKind.PARAGRAPH:
         return None
-    candidates = (
-        "재무상태표",
-        "손익 및 포괄손익계산서",
-        "손익계산서",
-        "포괄손익계산서",
-        "자본변동표",
-        "현금흐름표",
-    )
-    for row in block.rows[:3]:
+    title = _TITLE_LINES.get("".join(block.text.split()))
+    if title is None or not _announces_table(ordered, next_position):
+        return None
+    return title
+
+
+def _announces_table(ordered: Sequence[DocumentBlock], start: int) -> bool:
+    """Whether a title line is followed by the statement table it names.
+
+    Blank lines and caption lines such as the period, the company, or the unit
+    may sit in between. Another title line means the document is listing
+    statements, as a table of contents does, and names no table.
+    """
+    for position in range(start, len(ordered)):
+        block = ordered[position]
+        if block.kind is not BlockKind.PARAGRAPH:
+            return block.kind is BlockKind.TABLE
+        if "".join(block.text.split()) in _TITLE_LINES:
+            return False
+    return False
+
+
+def _title_from_rows(rows: tuple[tuple[str, ...], ...]) -> str | None:
+    for row in rows[:3]:
         text = "".join(" ".join(row).split())
-        for candidate in candidates:
+        for candidate in _STATEMENT_TITLES:
             if candidate in text:
                 return candidate
     return None
