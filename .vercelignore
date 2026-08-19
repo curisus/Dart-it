@@ -1,0 +1,15 @@
+# Secrets - the Vercel CLI default exclusion list does not cover plain .env
+.env
+.env.*
+!.env.example
+
+# Development tool caches - not excluded by default
+.mypy_cache
+.ruff_cache
+.pytest_cache
+
+# Not used at runtime
+tests
+docs
+scripts
+.github
