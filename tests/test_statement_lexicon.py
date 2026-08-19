@@ -2,9 +2,10 @@ from typing import Final
 
 import pytest
 
-from dart_crawler import attachments, document_model, excel_export
+from dart_crawler import attachments, document_model
 from dart_crawler.document_model import BlockKind, DocumentBlock, SectionKind
 from dart_crawler.html_parser import parse_html_document
+from dart_crawler.section_models import missing_core_sections
 from dart_crawler.statement_lexicon import (
     classify,
     compact,
@@ -252,7 +253,7 @@ def test_statement_title_survives_realistic_separators(
 
     assert result.ok is True
     assert result.data is not None
-    assert excel_export._missing_core_sections(result.data) == expected_missing
+    assert missing_core_sections(result.data) == expected_missing
 
 
 def test_image_does_not_bridge_explanatory_paragraphs_to_unrelated_table() -> None:
@@ -275,4 +276,4 @@ def test_image_does_not_bridge_explanatory_paragraphs_to_unrelated_table() -> No
     # Then
     assert result.ok is True
     assert result.data is not None
-    assert "재무상태표" in excel_export._missing_core_sections(result.data)
+    assert "재무상태표" in missing_core_sections(result.data)
