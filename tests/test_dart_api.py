@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from zipfile import ZipFile
 
+import httpx2
 import pytest
 
 from dart_crawler.attachments import AttachmentService
@@ -18,6 +19,19 @@ class FakeHttpClient:
     def get(self, url: str, *, params: dict[str, str]) -> HttpResponse:
         self.requests.append((url, params))
         return self.responses.pop(0)
+
+    def close(self) -> None:
+        return None
+
+
+@dataclass
+class DisconnectingHttpClient:
+    calls: int = 0
+
+    def get(self, url: str, *, params: dict[str, str]) -> HttpResponse:
+        self.calls += 1
+        message = "Server disconnected without sending a response."
+        raise httpx2.RemoteProtocolError(message)
 
     def close(self) -> None:
         return None
@@ -69,6 +83,25 @@ def test_auth_failure_does_not_retry() -> None:
     assert result.error is not None
     assert result.error.code.value == "UPSTREAM_AUTH"
     assert delays == []
+
+
+def test_server_disconnect_maps_to_upstream_unavailable_after_retries() -> None:
+    client = DisconnectingHttpClient()
+    delays: list[float] = []
+    api = DartApi(
+        client,
+        api_key="test-key",
+        retry_policy=RetryPolicy(max_retries=2, sleeper=delays.append),
+    )
+
+    result = api.list_disclosures("00126380", "A001")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.UPSTREAM_UNAVAILABLE
+    assert result.error.retryable is True
+    assert delays == [1.0, 2.0]
+    assert client.calls == 3
 
 
 def test_find_disclosure_paginates_receipt_day() -> None:

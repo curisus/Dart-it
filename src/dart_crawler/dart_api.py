@@ -332,7 +332,7 @@ class DartApi:
         for attempt in range(self._retry_policy.max_retries + 1):
             try:
                 response = self._http_client.get(url, params=request_params)
-            except (httpx2.TimeoutException, httpx2.NetworkError):
+            except httpx2.TransportError:
                 if attempt >= self._retry_policy.max_retries:
                     return Result.failure(
                         error_info(
