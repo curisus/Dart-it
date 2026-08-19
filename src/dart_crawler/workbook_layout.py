@@ -102,12 +102,28 @@ def _display_text(value: object, number_format: str) -> str:
         return value
     if isinstance(value, bool) or not isinstance(value, int | float):
         return str(value)
-    if not number_format.startswith("#,##0"):
+    positive_format, _, negative_format = number_format.partition(";")
+    has_thousands_grouping = positive_format.startswith("#,##0")
+    if not has_thousands_grouping and not positive_format.startswith("0"):
         return str(value)
-    if isinstance(value, int):
-        return f"{value:,}"
-    decimal_places = len(number_format.partition(".")[2])
-    return f"{value:,.{decimal_places}f}"
+    decimal_places = len(positive_format.partition(".")[2])
+    has_parenthesized_negative = (
+        value < 0
+        and negative_format.startswith("(")
+        and negative_format.endswith(")")
+    )
+    display_value = abs(value) if has_parenthesized_negative else value
+    if decimal_places == 0:
+        formatted_value = (
+            f"{display_value:,}" if has_thousands_grouping else str(display_value)
+        )
+    elif has_thousands_grouping:
+        formatted_value = f"{display_value:,.{decimal_places}f}"
+    else:
+        formatted_value = f"{display_value:.{decimal_places}f}"
+    if has_parenthesized_negative:
+        return f"({formatted_value})"
+    return formatted_value
 
 
 def _display_width(text: str) -> float:
