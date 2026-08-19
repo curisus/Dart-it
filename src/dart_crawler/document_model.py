@@ -7,7 +7,13 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum, unique
-from typing import Final
+from dart_crawler.statement_lexicon import SectionKind as SectionKind  # noqa: PLC0414
+from dart_crawler.statement_lexicon import (
+    classify,
+    statement_kinds,
+    statement_title_in_rows,
+    statement_title_of_line,
+)
 
 
 @unique
@@ -18,46 +24,6 @@ class BlockKind(StrEnum):
     PARAGRAPH = "paragraph"
     TABLE = "table"
     IMAGE = "image"
-
-
-@unique
-class SectionKind(StrEnum):
-    """Workbook categories inferred from section titles."""
-
-    OPINION = "opinion"
-    BALANCE_SHEET = "balance_sheet"
-    INCOME = "income"
-    EQUITY = "equity"
-    CASH_FLOW = "cash_flow"
-    NOTE = "note"
-    OTHER = "other"
-
-
-_STATEMENT_KINDS: Final = frozenset(
-    {
-        SectionKind.BALANCE_SHEET,
-        SectionKind.INCOME,
-        SectionKind.EQUITY,
-        SectionKind.CASH_FLOW,
-    }
-)
-
-_STATEMENT_TITLES: Final = (
-    "재무상태표",
-    "손익 및 포괄손익계산서",
-    "손익계산서",
-    "포괄손익계산서",
-    "자본변동표",
-    "현금흐름표",
-)
-
-_TITLE_SCOPES: Final = ("", "연결", "별도")
-
-_TITLE_LINES: Final = {
-    scope + "".join(title.split()): title
-    for title in _STATEMENT_TITLES
-    for scope in _TITLE_SCOPES
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,24 +139,7 @@ def build_document(
 
 def classify_section(title: str) -> SectionKind:
     """Classify a section by stable DART report terminology."""
-    compact_title = "".join(title.split())
-    if "재무상태표" in compact_title:
-        return SectionKind.BALANCE_SHEET
-    if "손익" in compact_title or "포괄손익" in compact_title:
-        return SectionKind.INCOME
-    if "자본변동" in compact_title:
-        return SectionKind.EQUITY
-    if "현금흐름" in compact_title:
-        return SectionKind.CASH_FLOW
-    if "주석" in compact_title:
-        return SectionKind.NOTE
-    if (
-        "감사의견" in compact_title
-        or "검토의견" in compact_title
-        or "감사보고서" in compact_title
-    ):
-        return SectionKind.OPINION
-    return SectionKind.OTHER
+    return classify(title)
 
 
 def _close_section(
@@ -227,7 +176,7 @@ def _stays_inside_note(
     note is folded back into that note.
     """
     kind = classify_section(title)
-    return within_note and kind in _STATEMENT_KINDS and kind in seen_kinds
+    return within_note and kind in statement_kinds and kind in seen_kinds
 
 
 def _section_heading_title(
@@ -255,7 +204,7 @@ def _infer_section_title(
         return _title_from_rows(block.rows)
     if block.kind is not BlockKind.PARAGRAPH:
         return None
-    title = _TITLE_LINES.get("".join(block.text.split()))
+    title = statement_title_of_line(block.text)
     if title is None or not _announces_table(ordered, next_position):
         return None
     return title
@@ -272,18 +221,13 @@ def _announces_table(ordered: Sequence[DocumentBlock], start: int) -> bool:
         block = ordered[position]
         if block.kind is not BlockKind.PARAGRAPH:
             return block.kind is BlockKind.TABLE
-        if "".join(block.text.split()) in _TITLE_LINES:
+        if statement_title_of_line(block.text) is not None:
             return False
     return False
 
 
 def _title_from_rows(rows: tuple[tuple[str, ...], ...]) -> str | None:
-    for row in rows[:3]:
-        text = "".join(" ".join(row).split())
-        for candidate in _STATEMENT_TITLES:
-            if candidate in text:
-                return candidate
-    return None
+    return statement_title_in_rows(rows)
 
 
 def _split_note_sections(
