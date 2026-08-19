@@ -52,6 +52,17 @@ class Market(StrEnum):
                 assert_never(unreachable)
 
 
+@unique
+class MatchConfidence(StrEnum):
+    """How closely a company search result matched the query."""
+
+    EXACT = "exact"
+    PREFIX = "prefix"
+    CONTAINS = "contains"
+    ALIAS = "alias"
+    SIMILAR = "similar"
+
+
 class Company(BaseModel):
     """Company row returned by company search."""
 
@@ -62,6 +73,7 @@ class Company(BaseModel):
     stock_code: str | None = Field(default=None, pattern=r"^\d{6}$")
     market: Market
     ranking: int = Field(ge=1, le=5)
+    match_confidence: MatchConfidence
 
 
 class Filing(BaseModel):

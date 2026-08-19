@@ -1,4 +1,11 @@
-from dart_crawler.domain import Company, Filing, Market, ReportKind, ReportPeriod
+from dart_crawler.domain import (
+    Company,
+    Filing,
+    Market,
+    MatchConfidence,
+    ReportKind,
+    ReportPeriod,
+)
 
 
 def test_company_keeps_market_and_rank_as_typed_values() -> None:
@@ -8,10 +15,12 @@ def test_company_keeps_market_and_rank_as_typed_values() -> None:
         stock_code="005930",
         market=Market.KOSPI,
         ranking=1,
+        match_confidence=MatchConfidence.EXACT,
     )
 
     assert company.market is Market.KOSPI
     assert company.ranking == 1
+    assert company.match_confidence is MatchConfidence.EXACT
 
 
 def test_filing_keeps_corrected_receipts_in_one_chain() -> None:
