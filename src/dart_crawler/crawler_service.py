@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Final
+
+from pydantic import SecretStr
 
 from dart_crawler.amount_checker import compare_statement_amounts
 from dart_crawler.api_models import DartListRow
@@ -11,6 +16,7 @@ from dart_crawler.company_search import CompanySearchService
 from dart_crawler.dart_api import DartApi, FinancialQuery
 from dart_crawler.document_model import ParsedDocument
 from dart_crawler.document_parser import parse_attachment
+from dart_crawler.document_validation import validate_document
 from dart_crawler.domain import Attachment, Company, Filing, ReportKind
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
 from dart_crawler.filing_service import FilingService
@@ -23,15 +29,41 @@ from dart_crawler.result import (
     WarningInfo,
     error_info,
 )
-from dart_crawler.settings import AppSettings
+from dart_crawler.section_models import (
+    ReportSectionData,
+    ReportSectionList,
+    missing_core_sections,
+    returned_cell_count,
+    returned_text_char_count,
+    select_sections,
+    summarize_sections,
+)
+
+PARSER_VERSION: Final = "0.1.0"
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedDocument:
+    """One parsed attachment with the listing metadata that describes it."""
+
+    document: ParsedDocument
+    attachment_title: str
+    source_rcept_no: str
 
 
 class CrawlerService:
     """Build per-request adapters while retaining no user selection state."""
 
-    def __init__(self, settings: AppSettings, http_client: HttpClient) -> None:
-        self._settings = settings
-        self._api = DartApi(http_client, api_key=settings.api_key.get_secret_value())
+    def __init__(
+        self,
+        api_key: SecretStr,
+        http_client: HttpClient,
+        *,
+        output_dir: Path | None = None,
+    ) -> None:
+        self._api = DartApi(http_client, api_key=api_key.get_secret_value())
+        # Remote requests have no writable filesystem, so exporting is optional.
+        self._output_dir = output_dir
 
     def search_companies(
         self,
@@ -72,6 +104,16 @@ class CrawlerService:
         attachment_id: str,
     ) -> Result[ExportedFile]:
         """Collect, compare, parse, and export one selected attachment."""
+        output_dir = self._output_dir
+        if output_dir is None:
+            return Result.failure(
+                error_info(
+                    ErrorCode.CONFIG_ERROR,
+                    "출력 폴더가 설정되지 않아 엑셀을 만들 수 없습니다.",
+                    retryable=False,
+                ),
+                next_action="출력 폴더가 설정된 로컬 서버에서 실행하세요.",
+            )
         disclosure = self._api.find_disclosure(rcept_no)
         if not disclosure.ok or disclosure.data is None:
             return Result.failure(
@@ -80,6 +122,170 @@ class CrawlerService:
                 else _not_found("접수번호 공시를 찾지 못했습니다."),
                 next_action="접수번호를 먼저 공시 목록에서 선택하세요.",
             )
+        loaded = self._load_parsed_document(rcept_no, attachment_id)
+        if not loaded.ok or loaded.data is None:
+            return Result.failure(
+                loaded.error
+                if loaded.error is not None
+                else _not_found("첨부문서를 준비하지 못했습니다."),
+                warnings=loaded.warnings,
+                next_action=loaded.next_action,
+            )
+        document = loaded.data.document
+        comparison_warnings = _comparison_warnings(
+            self._api,
+            disclosure.data,
+            loaded.data.attachment_title,
+            document,
+        )
+        date_warning: tuple[WarningInfo, ...] = ()
+        report_date = _report_date(document)
+        if report_date is None:
+            date_warning = (
+                WarningInfo(
+                    code=WarningCode.FALLBACK_SOURCE_USED,
+                    message="본문 작성일을 찾지 못해 접수일자를 파일명에 사용했습니다.",
+                ),
+            )
+        correction_chain = _correction_chain(self._api, disclosure.data)
+        context = ExportContext(
+            company_name=disclosure.data.corp_name,
+            report_date=report_date,
+            report_title=loaded.data.attachment_title,
+            receipt_date=disclosure.data.rcept_dt,
+            rcept_no=rcept_no,
+            source_rcept_no=loaded.data.source_rcept_no,
+            attachment_id=attachment_id,
+            correction_chain=correction_chain,
+            source_url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
+            parser_version=PARSER_VERSION,
+            document=document,
+            comparison_warnings=comparison_warnings,
+            collection_warnings=loaded.warnings + date_warning,
+        )
+        exported = ExcelExportService(output_dir).export(context)
+        return _merge_warnings(exported, ())
+
+    def list_report_sections(
+        self,
+        rcept_no: str,
+        attachment_id: str,
+    ) -> Result[ReportSectionList]:
+        """List the sections of one attachment without returning their content."""
+        loaded = self._validated_document(rcept_no, attachment_id)
+        if not loaded.ok or loaded.data is None:
+            return Result.failure(
+                loaded.error
+                if loaded.error is not None
+                else _not_found("첨부문서를 준비하지 못했습니다."),
+                warnings=loaded.warnings,
+                next_action=loaded.next_action,
+            )
+        document = loaded.data.document
+        summaries = summarize_sections(document)
+        coverage = document.source_coverage
+        return Result.success(
+            ReportSectionList(
+                rcept_no=rcept_no,
+                attachment_id=attachment_id,
+                report_title=document.report_title,
+                source_type=document.source_type,
+                source_sha256=document.source_sha256,
+                parser_version=PARSER_VERSION,
+                coverage_complete=coverage is not None and coverage.complete,
+                section_count=len(summaries),
+                total_cell_count=sum(summary.cell_count for summary in summaries),
+                total_text_char_count=sum(
+                    summary.text_char_count for summary in summaries
+                ),
+                sections=summaries,
+            ),
+            warnings=loaded.warnings + _core_statement_warnings(document),
+        )
+
+    def get_report_sections(
+        self,
+        rcept_no: str,
+        attachment_id: str,
+        section_ids: tuple[str, ...] = (),
+        section_kinds: tuple[str, ...] = (),
+    ) -> Result[ReportSectionData]:
+        """Return every block of the sections named by identifier or by kind."""
+        loaded = self._validated_document(rcept_no, attachment_id)
+        if not loaded.ok or loaded.data is None:
+            return Result.failure(
+                loaded.error
+                if loaded.error is not None
+                else _not_found("첨부문서를 준비하지 못했습니다."),
+                warnings=loaded.warnings,
+                next_action=loaded.next_action,
+            )
+        document = loaded.data.document
+        selected = select_sections(document, section_ids, section_kinds)
+        if not selected.ok or selected.data is None:
+            return Result.failure(
+                selected.error
+                if selected.error is not None
+                else _not_found("선택한 구역을 찾지 못했습니다."),
+                warnings=loaded.warnings,
+                next_action=selected.next_action,
+            )
+        return Result.success(
+            ReportSectionData(
+                rcept_no=rcept_no,
+                attachment_id=attachment_id,
+                source_sha256=document.source_sha256,
+                parser_version=PARSER_VERSION,
+                returned_cell_count=returned_cell_count(selected.data),
+                returned_text_char_count=returned_text_char_count(selected.data),
+                sections=selected.data,
+            ),
+            warnings=loaded.warnings + _core_statement_warnings(document),
+        )
+
+    def _validated_document(
+        self,
+        rcept_no: str,
+        attachment_id: str,
+    ) -> Result[LoadedDocument]:
+        """Load one attachment and stop before any data that failed its checks.
+
+        ``validate_document`` covers parsing fidelity — source coverage, table
+        shape, merge consistency — so its failure means the parse itself cannot
+        be trusted. The data tools therefore share the Excel path's hard gate:
+        a partial parse is never returned as if it were the source.
+        """
+        loaded = self._load_parsed_document(rcept_no, attachment_id)
+        if not loaded.ok or loaded.data is None:
+            return loaded
+        validation = validate_document(loaded.data.document)
+        if not validation.ok:
+            return Result.failure(
+                validation.error
+                if validation.error is not None
+                else error_info(
+                    ErrorCode.VALIDATION_FAILED,
+                    "원문 구조 검증 결과를 확인할 수 없습니다.",
+                    retryable=False,
+                ),
+                warnings=loaded.warnings,
+                next_action=validation.next_action,
+            )
+        return loaded
+
+    def _load_parsed_document(
+        self,
+        rcept_no: str,
+        attachment_id: str,
+    ) -> Result[LoadedDocument]:
+        """List, read, and parse one selected attachment of a receipt number.
+
+        The envelope carries every warning collected so far on both the success
+        and the failure path, so a caller merges ``result.warnings`` instead of
+        listing the attachments again. Disclosure metadata is deliberately
+        absent: ``find_disclosure`` costs up to hundreds of round trips and only
+        the Excel export needs the company name and the receipt date.
+        """
         attachment_service = AttachmentService(self._api)
         attachments = attachment_service.list(rcept_no)
         selected_attachment = _selected_attachment(attachments.data, attachment_id)
@@ -97,16 +303,6 @@ class CrawlerService:
                 warnings=attachments.warnings,
                 next_action="list_report_attachments를 다시 호출해 첨부를 선택하세요.",
             )
-        selected_title = (
-            selected_attachment.title
-            if selected_attachment is not None
-            else "DART 보고서"
-        )
-        source_rcept_no = (
-            selected_attachment.source_rcept_no
-            if selected_attachment is not None
-            else rcept_no
-        )
         read_selection: str | Attachment = (
             selected_attachment
             if selected_attachment is not None
@@ -130,41 +326,41 @@ class CrawlerService:
                 warnings=attachments.warnings + document.warnings,
                 next_action="다른 첨부문서를 선택하거나 DART 구조 변경을 확인하세요.",
             )
-        comparison_warnings = _comparison_warnings(
-            self._api,
-            disclosure.data,
-            selected_title,
-            document.data,
-        )
-        date_warning: tuple[WarningInfo, ...] = ()
-        report_date = _report_date(document.data)
-        if report_date is None:
-            date_warning = (
-                WarningInfo(
-                    code=WarningCode.FALLBACK_SOURCE_USED,
-                    message="본문 작성일을 찾지 못해 접수일자를 파일명에 사용했습니다.",
+        return Result.success(
+            LoadedDocument(
+                document=document.data,
+                attachment_title=(
+                    selected_attachment.title
+                    if selected_attachment is not None
+                    else "DART 보고서"
                 ),
-            )
-        correction_chain = _correction_chain(self._api, disclosure.data)
-        context = ExportContext(
-            company_name=disclosure.data.corp_name,
-            report_date=report_date,
-            report_title=selected_title,
-            receipt_date=disclosure.data.rcept_dt,
-            rcept_no=rcept_no,
-            source_rcept_no=source_rcept_no,
-            attachment_id=attachment_id,
-            correction_chain=correction_chain,
-            source_url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
-            parser_version="0.1.0",
-            document=document.data,
-            comparison_warnings=comparison_warnings,
-            collection_warnings=(
-                attachments.warnings + document.warnings + date_warning
+                source_rcept_no=(
+                    selected_attachment.source_rcept_no
+                    if selected_attachment is not None
+                    else rcept_no
+                ),
             ),
+            warnings=attachments.warnings + document.warnings,
         )
-        exported = ExcelExportService(self._settings.output_dir).export(context)
-        return _merge_warnings(exported, ())
+
+
+def _core_statement_warnings(document: ParsedDocument) -> tuple[WarningInfo, ...]:
+    """Warn about absent core statements instead of failing the data tools.
+
+    The Excel path refuses the export outright, but the data contract is to
+    return what the source holds, so a report without one of the four core
+    statements still succeeds and names what it lacks.
+    """
+    missing = missing_core_sections(document)
+    if not missing:
+        return ()
+    return (
+        WarningInfo(
+            code=WarningCode.PARTIAL_COLLECTION,
+            message="원문에서 핵심 재무제표를 찾지 못한 채로 구역을 반환했습니다.",
+            details={"missing_sections": list(missing)},
+        ),
+    )
 
 
 def _selected_attachment(

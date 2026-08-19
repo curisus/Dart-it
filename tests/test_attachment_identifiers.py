@@ -21,7 +21,6 @@ from dart_crawler.excel_export import (
 )
 from dart_crawler.http_client import HttpResponse
 from dart_crawler.result import ErrorCode, Result, error_info
-from dart_crawler.settings import AppSettings
 from dart_crawler.zip_safety import ArchiveLimits, inspect_archive
 
 _DEFAULT_MEMBER_CONTENT = "<document><title>감사보고서</title></document>"
@@ -79,12 +78,9 @@ class NoopHttpClient:
 
 def _crawler_service(output_dir: Path) -> CrawlerService:
     return CrawlerService(
-        AppSettings(
-            project_dir=output_dir,
-            api_key=SecretStr("test-key"),
-            output_dir=output_dir,
-        ),
+        SecretStr("test-key"),
         NoopHttpClient(),
+        output_dir=output_dir,
     )
 
 
@@ -162,6 +158,7 @@ def _configure_export(
         _self: ExcelExportService,
         context: ExportContext,
     ) -> Result[ExportedFile]:
+        assert _self._output_dir == output_dir
         contexts.append(context)
         return Result.success(exported)
 

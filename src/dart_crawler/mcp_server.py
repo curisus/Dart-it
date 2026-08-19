@@ -70,7 +70,13 @@ def _run_with_settings(
     operation: Callable[[CrawlerService], Result[T]],
 ) -> Result[T]:
     with HttpxClient() as http_client:
-        return operation(CrawlerService(settings, http_client))
+        return operation(
+            CrawlerService(
+                settings.api_key,
+                http_client,
+                output_dir=settings.output_dir,
+            )
+        )
 
 
 def _configuration_error() -> ErrorInfo:
