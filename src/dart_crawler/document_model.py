@@ -7,6 +7,8 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum, unique
+from typing import Final
+
 from dart_crawler.statement_lexicon import SectionKind as SectionKind  # noqa: PLC0414
 from dart_crawler.statement_lexicon import (
     classify,
@@ -24,6 +26,18 @@ class BlockKind(StrEnum):
     PARAGRAPH = "paragraph"
     TABLE = "table"
     IMAGE = "image"
+
+
+# Blocks that may sit between a statement title line and the table it names.
+# IMAGE cannot open a section by itself, so skipping it can never manufacture a
+# sheet that does not exist. HEADING is deliberately excluded: a heading DOES
+# open a section, so skipping it would let a table of contents or an audit
+# opinion heading fire a fake statement sheet.
+_TITLE_TO_TABLE_SKIPPABLE: Final = frozenset({BlockKind.PARAGRAPH, BlockKind.IMAGE})
+# When an image occurs, two paragraphs across the entire title-to-table gap
+# cover the usual period/unit caption pair. A third is narrative drift, so a
+# later unrelated table cannot be claimed by the title.
+_MAX_PARAGRAPHS_WITH_IMAGE: Final = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,11 +231,21 @@ def _announces_table(ordered: Sequence[DocumentBlock], start: int) -> bool:
     may sit in between. Another title line means the document is listing
     statements, as a table of contents does, and names no table.
     """
+    skipped_image = False
+    paragraph_gap = 0
     for position in range(start, len(ordered)):
         block = ordered[position]
-        if block.kind is not BlockKind.PARAGRAPH:
+        if block.kind not in _TITLE_TO_TABLE_SKIPPABLE:
             return block.kind is BlockKind.TABLE
+        if block.kind is BlockKind.IMAGE:
+            skipped_image = True
+            if paragraph_gap > _MAX_PARAGRAPHS_WITH_IMAGE:
+                return False
+            continue
         if statement_title_of_line(block.text) is not None:
+            return False
+        paragraph_gap += 1
+        if skipped_image and paragraph_gap > _MAX_PARAGRAPHS_WITH_IMAGE:
             return False
     return False
 

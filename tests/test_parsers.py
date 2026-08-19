@@ -900,3 +900,78 @@ def test_html_parser_uses_same_document_block_shape() -> None:
     ]
     assert blocks[1].rows[0] == ("항목", "")
     assert blocks[1].merged_ranges == ((1, 1, 1, 2),)
+
+
+def test_statement_title_line_opens_a_section_across_an_image() -> None:
+    html = (
+        "<document>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<p>현대자동차주식회사</p>"
+        "<p>재 무 상 태 표</p>"
+        "<img src='logo.jpg'/>"
+        "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert any(
+        section.kind is SectionKind.BALANCE_SHEET and section.title == "재무상태표"
+        for section in result.data.sections
+    )
+def test_statement_title_does_not_claim_table_after_long_pre_image_narrative() -> None:
+    # Given
+    html = (
+        "<document>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<p>재 무 상 태 표</p>"
+        "<p>첫 번째 설명 문단</p>"
+        "<p>두 번째 설명 문단</p>"
+        "<p>세 번째 설명 문단</p>"
+        "<img src='chart.jpg'/>"
+        "<table><tr><td>일반 항목</td><td>일반 값</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    # When
+    result = parse_html_document(html)
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert all(
+        section.kind is not SectionKind.BALANCE_SHEET
+        for section in result.data.sections
+    )
+
+
+def test_statement_title_opens_sections_with_bounded_gap_before_image() -> None:
+    # Given
+    html_documents = tuple(
+        (
+            "<document>"
+            "<heading>(첨부)재 무 제 표</heading>"
+            "<p>재 무 상 태 표</p>"
+            f"{caption}"
+            "<img src='chart.jpg'/>"
+            "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+            "<tr><td>자산총계</td><td>100</td></tr></table>"
+            "</document>"
+        ).encode()
+        for caption in ("", "<p>단위: 백만원</p>")
+    )
+
+    # When
+    results = tuple(parse_html_document(html) for html in html_documents)
+
+    # Then
+    for result in results:
+        assert result.ok is True
+        assert result.data is not None
+        assert any(
+            section.kind is SectionKind.BALANCE_SHEET
+            for section in result.data.sections
+        )
