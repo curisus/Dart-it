@@ -100,6 +100,7 @@ class Attachment(BaseModel):
 
     attachment_id: str = Field(pattern=r"^(opendart|viewer):\d{14}:.+")
     rcept_no: str = Field(pattern=r"^\d{14}$")
+    source_rcept_no: str = Field(pattern=r"^\d{14}$")
     title: str
     source: str
     standalone: bool

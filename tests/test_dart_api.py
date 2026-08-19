@@ -1,7 +1,13 @@
 from dataclasses import dataclass, field
+from io import BytesIO
+from zipfile import ZipFile
 
+import pytest
+
+from dart_crawler.attachments import AttachmentService
 from dart_crawler.dart_api import DartApi, RetryPolicy
 from dart_crawler.http_client import HttpResponse
+from dart_crawler.result import ErrorCode
 
 
 @dataclass
@@ -126,3 +132,150 @@ def test_viewer_document_uses_attachment_page_parameters() -> None:
         "length": "2113",
         "dtd": "dart4.xsd",
     }
+
+
+def test_document_download_reports_dart_status_error() -> None:
+    status_error_body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<result><status>014</status>"
+        "<message>\ud30c\uc77c\uc774 \uc874\uc7ac\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.</message></result>"
+    ).encode("utf-8")
+    zip_buffer = BytesIO()
+    with ZipFile(zip_buffer, "w") as archive:
+        archive.writestr("document.xml", "<document />")
+    zip_body = zip_buffer.getvalue()
+    client = FakeHttpClient(
+        [
+            HttpResponse(200, {}, status_error_body),
+            HttpResponse(200, {}, zip_body),
+        ]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    missing = api.download_document("20260515001658")
+
+    assert missing.ok is False, "DART status 014 must be reported as a failure"
+    assert missing.error is not None
+    assert missing.error.code is ErrorCode.NOT_FOUND
+
+    archive_result = api.download_document("20260312001119")
+
+    assert archive_result.ok is True
+    assert archive_result.data == zip_body
+
+
+def test_dart_status_message_is_not_exposed_in_serialized_result() -> None:
+    sentinel = "UPSTREAM_SENTINEL_SECRET"
+    status_error_body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<result><status>014</status><message>{sentinel}</message></result>"
+    ).encode()
+    client = FakeHttpClient([HttpResponse(200, {}, status_error_body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.download_document("20260515001658")
+
+    assert result.ok is False
+    assert result.data is None
+    assert result.error is not None
+    assert result.error.details["dart_status"] == "014"
+    assert sentinel not in result.model_dump_json()
+
+
+def test_document_download_maps_status_document_without_message() -> None:
+    status_error_body = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b"<result><status>014</status></result>"
+    )
+    api = DartApi(
+        FakeHttpClient([HttpResponse(200, {}, status_error_body)]),
+        api_key="test-key",
+    )
+
+    result = api.download_document("20260515001658")
+
+    assert result.ok is False
+    assert result.data is None
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert result.error.details["dart_status"] == "014"
+
+
+def test_dart_status_message_is_not_copied_into_attachment_warning_details() -> None:
+    sentinel = "UPSTREAM_WARNING_SENTINEL"
+    status_error_body = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<result><status>014</status><message>{sentinel}</message></result>"
+    ).encode()
+    viewer_html = (
+        '<a href="/dsaf001/sub.do?rcpNo=20260515001658&amp;dcmNo=111">'
+        "감사보고서</a>"
+    ).encode()
+    api = DartApi(
+        FakeHttpClient(
+            [
+                HttpResponse(200, {}, status_error_body),
+                HttpResponse(200, {}, viewer_html),
+            ]
+        ),
+        api_key="test-key",
+    )
+
+    result = AttachmentService(api).list("20260515001658")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.error is None
+    assert result.warnings[0].details["requested_zip_reason"] == (
+        "OpenDART 파일을 찾을 수 없습니다."
+    )
+    assert sentinel not in result.model_dump_json()
+
+@pytest.mark.parametrize(
+    "status_body",
+    [
+        pytest.param(
+            b"<result><status>014</status></result>",
+            id="without_declaration",
+        ),
+        pytest.param(
+            (
+                b'<dart:result xmlns:dart="urn:dart">'
+                b"<dart:status>014</dart:status>"
+                b"</dart:result>"
+            ),
+            id="namespaced",
+        ),
+        pytest.param(
+            b'<result version="1"><status>014</status></result>',
+            id="root_attribute",
+        ),
+    ],
+)
+def test_document_download_detects_status_xml_by_shape(status_body: bytes) -> None:
+    api = DartApi(
+        FakeHttpClient([HttpResponse(200, {}, status_body)]),
+        api_key="test-key",
+    )
+
+    result = api.download_document("20260515001658")
+
+    assert result.ok is False
+    assert result.data is None
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert result.error.details["dart_status"] == "014"
+
+
+def test_document_download_returns_pk_payload_untouched() -> None:
+    archive_body = b"PK\x03\x04<result><status>014</status></result>"
+    api = DartApi(
+        FakeHttpClient([HttpResponse(200, {}, archive_body)]),
+        api_key="test-key",
+    )
+
+    result = api.download_document("20260515001658")
+
+    assert result.ok is True
+    assert result.data == archive_body
+    assert result.error is None

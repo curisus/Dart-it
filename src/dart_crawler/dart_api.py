@@ -6,8 +6,11 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Final
 
 import httpx2
+from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
 from pydantic import ValidationError
 
 from dart_crawler.api_models import (
@@ -17,7 +20,7 @@ from dart_crawler.api_models import (
     FinancialAccountResponse,
 )
 from dart_crawler.http_client import HttpClient, HttpResponse
-from dart_crawler.result import ErrorCode, ErrorInfo, JsonObject, Result, error_info
+from dart_crawler.result import ErrorCode, ErrorInfo, Result, error_info
 
 _OPEN_DART_BASE = "https://opendart.fss.or.kr/api"
 _LIST_URL = f"{_OPEN_DART_BASE}/list.json"
@@ -26,6 +29,23 @@ _DOCUMENT_URL = f"{_OPEN_DART_BASE}/document.xml"
 _FINANCIAL_ACCOUNT_URL = f"{_OPEN_DART_BASE}/fnlttSinglAcntAll.json"
 _VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do"
 _VIEWER_DOCUMENT_URL = "https://dart.fss.or.kr/report/viewer.do"
+
+_DART_STATUS_ERRORS: Final[Mapping[str, tuple[ErrorCode, bool, str]]] = {
+    "010": (ErrorCode.UPSTREAM_AUTH, False, "OpenDART API 키가 등록되지 않았습니다."),
+    "011": (ErrorCode.UPSTREAM_AUTH, False, "OpenDART API 키를 사용할 수 없습니다."),
+    "012": (ErrorCode.UPSTREAM_AUTH, False, "OpenDART 요청이 허용되지 않았습니다."),
+    "013": (ErrorCode.NOT_FOUND, False, "OpenDART 조회 결과가 없습니다."),
+    "014": (ErrorCode.NOT_FOUND, False, "OpenDART 파일을 찾을 수 없습니다."),
+    "020": (ErrorCode.UPSTREAM_RATE_LIMIT, True, "OpenDART 호출 한도를 초과했습니다."),
+    "800": (ErrorCode.UPSTREAM_UNAVAILABLE, True, "OpenDART 시스템을 점검 중입니다."),
+    "900": (ErrorCode.UPSTREAM_UNAVAILABLE, True, "OpenDART 요청 형식이 올바르지 않습니다."),
+    "901": (ErrorCode.UPSTREAM_AUTH, False, "OpenDART 요청 권한이 없습니다."),
+}
+_DEFAULT_DART_STATUS_ERROR: Final = (
+    ErrorCode.UPSTREAM_UNAVAILABLE,
+    True,
+    "OpenDART가 요청을 처리하지 못했습니다.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +124,7 @@ class DartApi:
                 next_action="OpenDART 응답 형식 변경 여부를 확인하세요.",
             )
         if parsed.status != "000":
-            return Result.failure(_dart_status_error(parsed.status, parsed.message))
+            return Result.failure(_dart_status_error(parsed.status))
         return Result.success(parsed.list)
 
     def find_disclosure(self, rcept_no: str) -> Result[DartListRow]:
@@ -151,7 +171,7 @@ class DartApi:
                 if parsed.status == "013":
                     break
                 if parsed.status != "000":
-                    return Result.failure(_dart_status_error(parsed.status, parsed.message))
+                    return Result.failure(_dart_status_error(parsed.status))
                 for row in parsed.list:
                     if row.rcept_no == rcept_no:
                         return Result.success(row)
@@ -265,7 +285,7 @@ class DartApi:
                 )
             )
         if parsed.status != "000":
-            return Result.failure(_dart_status_error(parsed.status, parsed.message))
+            return Result.failure(_dart_status_error(parsed.status))
         return Result.success(parsed.list)
 
     def _get_json(
@@ -294,6 +314,9 @@ class DartApi:
                 ),
                 next_action="잠시 후 파일 수집을 다시 시도하세요.",
             )
+        status_document = _dart_status_document(response.data.content)
+        if status_document is not None:
+            return Result.failure(_dart_status_error(status_document))
         return Result.success(response.data.content)
 
     def _request(
@@ -386,24 +409,40 @@ def _retry_delay(response: HttpResponse, attempt: int) -> float:
     return float(2**attempt)
 
 
-def _dart_status_error(status: str, message: str) -> ErrorInfo:
-    errors: dict[str, tuple[ErrorCode, bool]] = {
-        "010": (ErrorCode.UPSTREAM_AUTH, False),
-        "011": (ErrorCode.UPSTREAM_AUTH, False),
-        "012": (ErrorCode.UPSTREAM_AUTH, False),
-        "013": (ErrorCode.NOT_FOUND, False),
-        "014": (ErrorCode.NOT_FOUND, False),
-        "020": (ErrorCode.UPSTREAM_RATE_LIMIT, True),
-        "800": (ErrorCode.UPSTREAM_UNAVAILABLE, True),
-        "900": (ErrorCode.UPSTREAM_UNAVAILABLE, True),
-        "901": (ErrorCode.UPSTREAM_AUTH, False),
-    }
-    code, retryable = errors.get(
+def _dart_status_error(status: str) -> ErrorInfo:
+    code, retryable, message = _DART_STATUS_ERRORS.get(
         status,
-        (ErrorCode.UPSTREAM_UNAVAILABLE, True),
+        _DEFAULT_DART_STATUS_ERROR,
     )
-    details: JsonObject = {"dart_status": status}
-    return error_info(code, message, retryable=retryable, details=details)
+    return error_info(
+        code,
+        message,
+        retryable=retryable,
+        details={"dart_status": status},
+    )
+
+
+def _dart_status_document(content: bytes) -> str | None:
+    """Parse a DART status XML by structure while leaving ZIP bytes untouched."""
+    if content.startswith(b"PK"):
+        return None
+    try:
+        root = ElementTree.fromstring(content)
+    except (ElementTree.ParseError, DefusedXmlException):
+        return None
+    if root.tag.rsplit("}", maxsplit=1)[-1] != "result":
+        return None
+    status_element = next(
+        (
+            child
+            for child in root
+            if child.tag.rsplit("}", maxsplit=1)[-1] == "status"
+        ),
+        None,
+    )
+    if status_element is None:
+        return None
+    return (status_element.text or "").strip()
 
 
 def _viewer_document_params(

@@ -82,8 +82,37 @@ class CrawlerService:
             )
         attachment_service = AttachmentService(self._api)
         attachments = attachment_service.list(rcept_no)
-        selected_title = _selected_title(attachments.data, attachment_id)
-        content = attachment_service.read_selected(rcept_no, attachment_id)
+        selected_attachment = _selected_attachment(attachments.data, attachment_id)
+        listing_succeeded = attachments.ok and attachments.data is not None
+        if selected_attachment is None and listing_succeeded:
+            return Result.failure(
+                error_info(
+                    ErrorCode.INVALID_INPUT,
+                    (
+                        "첨부 식별자가 이 접수번호의 목록에 없습니다. "
+                        "list_report_attachments에서 반환된 식별자를 선택하세요."
+                    ),
+                    retryable=False,
+                ),
+                warnings=attachments.warnings,
+                next_action="list_report_attachments를 다시 호출해 첨부를 선택하세요.",
+            )
+        selected_title = (
+            selected_attachment.title
+            if selected_attachment is not None
+            else "DART 보고서"
+        )
+        source_rcept_no = (
+            selected_attachment.source_rcept_no
+            if selected_attachment is not None
+            else rcept_no
+        )
+        read_selection: str | Attachment = (
+            selected_attachment
+            if selected_attachment is not None
+            else attachment_id
+        )
+        content = attachment_service.read_selected(rcept_no, read_selection)
         if not content.ok or content.data is None:
             return Result.failure(
                 content.error
@@ -123,6 +152,7 @@ class CrawlerService:
             report_title=selected_title,
             receipt_date=disclosure.data.rcept_dt,
             rcept_no=rcept_no,
+            source_rcept_no=source_rcept_no,
             attachment_id=attachment_id,
             correction_chain=correction_chain,
             source_url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
@@ -137,14 +167,14 @@ class CrawlerService:
         return _merge_warnings(exported, ())
 
 
-def _selected_title(
+def _selected_attachment(
     attachments: tuple[Attachment, ...] | None, attachment_id: str
-) -> str:
+) -> Attachment | None:
     if attachments:
         for attachment in attachments:
             if attachment.attachment_id == attachment_id:
-                return attachment.title
-    return "DART 보고서"
+                return attachment
+    return None
 
 
 def _comparison_warnings(

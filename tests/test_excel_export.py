@@ -52,6 +52,7 @@ def _context(document: ParsedDocument) -> ExportContext:
         report_title="감사보고서",
         receipt_date="20260310",
         rcept_no="20260310002820",
+        source_rcept_no="20260310002820",
         attachment_id="opendart:20260310002820:audit.xml",
         correction_chain=("20260310002820",),
         source_url="https://dart.example/report",

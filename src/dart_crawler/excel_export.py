@@ -50,6 +50,7 @@ class ExportContext(BaseModel):
     report_title: str
     receipt_date: str
     rcept_no: str
+    source_rcept_no: str
     attachment_id: str
     correction_chain: tuple[str, ...]
     source_url: str
@@ -144,12 +145,14 @@ class ExcelExportService:
                 )
             )
         reused = matching_existing_file(output_path, context)
+        # Reuse alone tolerates a pre-change legacy workbook without the new row.
         existing_validation = (
             validate_workbook(
                 output_path,
                 context,
                 collection_status=status.value,
                 summary=validation_summary,
+                allow_legacy_source_receipt_omission=True,
             )
             if reused
             else None
@@ -186,11 +189,13 @@ class ExcelExportService:
                     details={"reason": str(exc)},
                 )
             )
+        # A newly written workbook must always contain source_rcept_no.
         workbook_validation = validate_workbook(
             output_path,
             context,
             collection_status=status.value,
             summary=validation_summary,
+            allow_legacy_source_receipt_omission=False,
         )
         if not workbook_validation.ok:
             try:
