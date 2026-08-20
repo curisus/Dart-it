@@ -233,7 +233,18 @@ def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         name, audit opinion, emphasis-of-matter and key audit matters),
         audit_service_contract (audit fee and service contract),
         non_audit_service_contract (non-audit service contracts with the
-        auditor). An unknown topic fails with the full supported topic list
+        auditor); dividend, capital_change, treasury_stock, total_shares
+        (shares and capital); largest_shareholder,
+        largest_shareholder_change, minority_shareholders (ownership);
+        executives, employees, outside_directors (people);
+        director_individual_pay, director_total_pay, individual_pay_top5,
+        unregistered_executive_pay, director_pay_approved,
+        director_pay_by_type (compensation); other_corp_investment,
+        debt_securities_issued, commercial_paper_balance,
+        short_term_bond_balance, corporate_bond_balance,
+        hybrid_securities_balance, contingent_capital_balance (investments
+        and debt securities); private_fund_usage, public_fund_usage (fund
+        usage). An unknown topic fails with the full supported topic list
         in its error details.
         """
         return run(

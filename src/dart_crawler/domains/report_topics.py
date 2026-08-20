@@ -78,6 +78,103 @@ REPORT_TOPICS: Final = _as_registry(
         "accnutAdtorNonAdtServcCnclsSttus",
         "회계감사인과의 비감사용역 계약체결 현황",
     ),
+    ReportTopic("dividend", "alotMatter", "배당에 관한 사항"),
+    ReportTopic("capital_change", "irdsSttus", "증자(감자) 현황"),
+    ReportTopic(
+        "treasury_stock",
+        "tesstkAcqsDspsSttus",
+        "자기주식 취득 및 처분 현황",
+    ),
+    ReportTopic("largest_shareholder", "hyslrSttus", "최대주주 현황"),
+    ReportTopic(
+        "largest_shareholder_change",
+        "hyslrChgSttus",
+        "최대주주 변동현황",
+    ),
+    ReportTopic("minority_shareholders", "mrhlSttus", "소액주주 현황"),
+    ReportTopic("executives", "exctvSttus", "임원 현황"),
+    ReportTopic("employees", "empSttus", "직원 현황"),
+    ReportTopic(
+        "director_individual_pay",
+        "hmvAuditIndvdlBySttus",
+        "이사·감사의 개인별 보수현황(5억원 이상)",
+    ),
+    ReportTopic(
+        "director_total_pay",
+        "hmvAuditAllSttus",
+        "이사·감사 전체의 보수현황(보수지급금액 - 이사·감사 전체)",
+    ),
+    ReportTopic(
+        "individual_pay_top5",
+        "indvdlByPay",
+        "개인별 보수지급 금액(5억이상 상위5인)",
+    ),
+    ReportTopic(
+        "other_corp_investment",
+        "otrCprInvstmntSttus",
+        "타법인 출자현황",
+    ),
+    ReportTopic("total_shares", "stockTotqySttus", "주식의 총수 현황"),
+    ReportTopic(
+        "debt_securities_issued",
+        "detScritsIsuAcmslt",
+        "채무증권 발행실적",
+    ),
+    ReportTopic(
+        "commercial_paper_balance",
+        "entrprsBilScritsNrdmpBlce",
+        "기업어음증권 미상환 잔액",
+    ),
+    ReportTopic(
+        "short_term_bond_balance",
+        "srtpdPsndbtNrdmpBlce",
+        "단기사채 미상환 잔액",
+    ),
+    ReportTopic(
+        "corporate_bond_balance",
+        "cprndNrdmpBlce",
+        "회사채 미상환 잔액",
+    ),
+    ReportTopic(
+        "hybrid_securities_balance",
+        "newCaplScritsNrdmpBlce",
+        "신종자본증권 미상환 잔액",
+    ),
+    ReportTopic(
+        "contingent_capital_balance",
+        "cndlCaplScritsNrdmpBlce",
+        "조건부 자본증권 미상환 잔액",
+    ),
+    ReportTopic(
+        "outside_directors",
+        "outcmpnyDrctrNdChangeSttus",
+        "독립(사외)이사 및 그 변동현황",
+    ),
+    ReportTopic(
+        "unregistered_executive_pay",
+        "unrstExctvMendngSttus",
+        "미등기임원 보수현황",
+    ),
+    ReportTopic(
+        "director_pay_approved",
+        "drctrAdtAllMendngSttusGmtsckConfmAmount",
+        "이사·감사 전체의 보수현황(주주총회 승인금액)",
+    ),
+    ReportTopic(
+        "director_pay_by_type",
+        "drctrAdtAllMendngSttusMendngPymntamtTyCl",
+        "이사·감사 전체의 보수현황(보수지급금액 - 유형별)",
+    ),
+    ReportTopic(
+        "private_fund_usage",
+        "prvsrpCptalUseDtls",
+        "사모자금의 사용내역",
+    ),
+    ReportTopic(
+        "public_fund_usage",
+        "pssrpCptalUseDtls",
+        "공모자금의 사용내역",
+    ),
 )
 
 
