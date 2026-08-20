@@ -119,7 +119,11 @@ class RegistrationStatementService:
             statement.endpoint, corp_code, bgn_de, end_de
         )
         if not fetched.ok or fetched.data is None:
-            if fetched.error is not None and fetched.error.code is ErrorCode.NOT_FOUND:
+            if (
+                fetched.error is not None
+                and fetched.error.code is ErrorCode.NOT_FOUND
+                and fetched.error.details.get("dart_status") == "013"
+            ):
                 source_groups: tuple[DartGroup[JsonObject], ...] = ()
             else:
                 return Result.failure(

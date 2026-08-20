@@ -52,15 +52,19 @@ def _statement_row(**overrides: str) -> JsonObject:
     return base
 
 
-def _not_found() -> Result[tuple[DartGroup[JsonObject], ...]]:
-    """Build the adapter result shape for OpenDART status 013."""
+def _not_found(details: JsonObject) -> Result[tuple[DartGroup[JsonObject], ...]]:
     return Result[tuple[DartGroup[JsonObject], ...]].failure(
         error_info(
             ErrorCode.NOT_FOUND,
             "OpenDART 조회 결과가 없습니다.",
             retryable=False,
+            details=details,
         )
     )
+
+
+def _status_013_not_found() -> Result[tuple[DartGroup[JsonObject], ...]]:
+    return _not_found(details={"dart_status": "013"})
 
 
 def test_registry_has_the_six_ds006_stmt_types() -> None:
@@ -197,7 +201,9 @@ def test_get_all_000_empty_groups_succeeds_with_partial_collection_warning() -> 
 
 def test_get_status_013_succeeds_empty_with_partial_collection_warning() -> None:
     """Given OpenDART status 013, then DS006 returns an empty successful payload."""
-    source = RecordingRegistrationStatementSource({_EQUITY_ENDPOINT: _not_found()})
+    source = RecordingRegistrationStatementSource(
+        {_EQUITY_ENDPOINT: _status_013_not_found()}
+    )
     service = RegistrationStatementService(source)
 
     result = service.get(_CORP_CODE, "equity_securities", _BGN_DE, _END_DE)
@@ -209,6 +215,33 @@ def test_get_status_013_succeeds_empty_with_partial_collection_warning() -> None
     assert result.data.returned_row_count == 0
     assert result.warnings[0].code is WarningCode.PARTIAL_COLLECTION
     assert result.warnings[0].details == {"empty_stmt_type": "equity_securities"}
+
+
+@pytest.mark.parametrize(
+    ("details", "scenario"),
+    [
+        ({"status_code": 404}, "generic HTTP 404"),
+        ({"dart_status": "014"}, "DART status 014"),
+    ],
+    ids=["http-404", "dart-status-014"],
+)
+def test_get_propagates_non_013_not_found_without_data_or_warning(
+    details: JsonObject,
+    scenario: str,
+) -> None:
+    source = RecordingRegistrationStatementSource(
+        {_EQUITY_ENDPOINT: _not_found(details)}
+    )
+    service = RegistrationStatementService(source)
+
+    result = service.get(_CORP_CODE, "equity_securities", _BGN_DE, _END_DE)
+
+    assert result.ok is False, scenario
+    assert result.data is None
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert result.error.details == details
+    assert result.warnings == ()
 
 
 def test_extended_registry_serves_a_new_stmt_type() -> None:
