@@ -39,6 +39,25 @@ class DartRowsResponse[RowT](BaseModel):
 DartListResponse = DartRowsResponse[DartListRow]
 
 
+class DartGroup[RowT](BaseModel):
+    """One titled OpenDART group containing a required row list."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    title: str
+    list: tuple[RowT, ...]
+
+
+class DartGroupsResponse[RowT](BaseModel):
+    """OpenDART envelope for endpoints that return titled row groups."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    status: str
+    message: str
+    group: tuple[DartGroup[RowT], ...] = ()
+
+
 class FinancialAccount(BaseModel):
     """One row from the OpenDART full-account financial API."""
 

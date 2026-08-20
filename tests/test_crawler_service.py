@@ -22,9 +22,12 @@ class RecordingHttpClient:
     """Fake HTTP client that records every attempted request."""
 
     requested_urls: list[str] = field(default_factory=list)
+    responses: list[HttpResponse] = field(default_factory=list)
 
     def get(self, url: str, *, params: dict[str, str]) -> HttpResponse:
         self.requested_urls.append(url)
+        if self.responses:
+            return self.responses.pop(0)
         return HttpResponse(status_code=200, headers={}, content=b"")
 
     def close(self) -> None:
@@ -157,3 +160,26 @@ def test_load_parsed_document_rejects_identifier_missing_from_listing(
     assert loaded.error.code is ErrorCode.INVALID_INPUT
     assert loaded.warnings == (listing_warning,)
     assert "list_report_attachments" in (loaded.next_action or "")
+
+
+def test_get_registration_statements_delegates_to_ds006_endpoint() -> None:
+    response_body = (
+        b'{"status":"000","message":"OK","group":[{"title":"'
+        b'\xec\x9d\xbc\xeb\xb0\x98\xec\x82\xac\xed\x95\xad",'
+        b'"list":[{"corp_code":"00126380","rcept_no":"20240115000123"}]}]}'
+    )
+    http_client = RecordingHttpClient()
+    http_client.responses = [HttpResponse(200, {}, response_body)]
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    result = service.get_registration_statements(
+        "00126380",
+        "equity_securities",
+        "20240101",
+        "20241231",
+    )
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.groups[0].title == "일반사항"
+    assert http_client.requested_urls == ["https://opendart.fss.or.kr/api/estkRs.json"]

@@ -8,8 +8,8 @@
 
 | 표면 | 컨셉 | 도구 구성 |
 |---|---|---|
-| **로컬** (`mcp_server.py`, stdio) | 전체 기능 superset. API 키가 컴퓨터 밖으로 나가지 않는 안전성이 강점. 파일 반출(xlsx, md)을 포함해 더 넓은 작업을 지원 | 공통 조회 12종 + export 그룹(xlsx, md) |
-| **원격** (`remote_server.py`, Vercel) | 모든 조회 도구를 제공. 설치 없이 사용, 키는 요청마다 전달(헤더 > Bearer > `?key=`) | 공통 조회 12종 전부 |
+| **로컬** (`mcp_server.py`, stdio) | 전체 기능 superset. API 키가 컴퓨터 밖으로 나가지 않는 안전성이 강점. 파일 반출(xlsx, md)을 포함해 더 넓은 작업을 지원 | 공통 조회 13종 + export 그룹(xlsx, md) |
+| **원격** (`remote_server.py`, Vercel) | 모든 조회 도구를 제공. 설치 없이 사용, 키는 요청마다 전달(헤더 > Bearer > `?key=`) | 공통 조회 13종 전부 |
 
 원칙: **중복 기능은 카탈로그로 통합, 파일 반출만 로컬에만.** 원격에는 파일을 쓸 수 없어 export 그룹만 못 올리고, 조회 도구는 로컬·원격에 항상 동시에 올린다.
 
@@ -20,12 +20,13 @@
                 domains/ 패키지    — 도메인별 서비스가 검증·조회·크기가드를 담당
                   query_guards.py = corp_code/연도/reprt_code 등 공용 입력 검증 가드
                   registry.py     = RegistryEntry/as_registry, key·endpoint·label 레지스트리 공용 헬퍼
-                                    (report_topics/ownership/material_events 세 도메인이 공유)
+                                    (report_topics/ownership/material_events/registration_statements 네 도메인이 공유)
                   financials.py   = FinancialsService(전체 계정/주요계정/재무지표), DS003 조회
                   report_topics.py = ReportTopicService(감사정보 등 DS002 topic 레지스트리 조회)
                   company_profile.py = CompanyProfileService(기업개황 단일 조회), DS001 company.json
                   ownership.py    = OwnershipService(대량보유·임원 소유보고 레지스트리 조회), DS004
                   material_events.py = MaterialEventService(주요사항보고 36종 레지스트리 조회), DS005
+                  registration_statements.py = RegistrationStatementService(증권신고서 6종 그룹 조회), DS006
                 = 모두 DART에서 데이터를 가져와 Result[T]로 반환
                       │
 ② 도구 카탈로그  tool_catalog.py
@@ -56,6 +57,8 @@
 5. **주의사항**(설계 문서에서 검증된 함정): `find_disclosure`는 최악 수백 왕복이므로 신규 도구에서 호출 금지. 응답 크기는 자르지 말고 상한 초과 시 거부. 키는 오류·로그에 절대 노출 금지.
 
 `get_report_topics`(DS002 정기보고서 주요정보)는 위 레시피를 레지스트리 패턴으로 한 번 더 압축한 사례다. `domains/report_topics.py`의 `REPORT_TOPICS`가 topic 키·OpenDART endpoint·한글 라벨을 한 곳에 모아두므로, **신규 DS002 topic 추가 = `REPORT_TOPICS`에 `ReportTopic` 1줄 추가 + 해당 topic용 픽스처 추가**로 끝난다. 서비스 로직(가드·부분실패 정책·크기 상한)과 `get_report_topics` 도구 정의는 손대지 않는다. 다만 도구 docstring은 지원 topic 목록을 리터럴로 나열하므로 레지스트리 확장 시 함께 갱신해야 하며, 이 정합성은 테스트로 강제된다.
+
+`get_registration_statements`(DS006 증권신고서 주요정보)도 같은 계열의 레지스트리형 조회 도구다. MCP 표면은 `corp_code`, `stmt_type`, `bgn_de`, `end_de` 네 입력만 노출한다(`ctx`는 SDK가 주입하므로 스키마에 나오면 안 된다). `stmt_type`은 `equity_securities`, `debt_securities`, `depositary_receipts`, `merger`, `stock_exchange_transfer`, `division` 중 하나이고 날짜 2개는 필수다. 응답은 DART 공식 그룹 제목별 `groups`와 `returned_group_count`, `returned_row_count`를 돌려주며, 기간 내 자료가 없는 경우도 빈 그룹/행 수와 경고로 응답한다.
 
 ## 관련 문서
 

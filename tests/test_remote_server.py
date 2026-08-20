@@ -181,11 +181,11 @@ def test_missing_api_key_fails_with_config_error(
 
 
 @pytest.mark.anyio
-async def test_remote_server_exposes_exactly_the_twelve_data_tools() -> None:
+async def test_remote_server_exposes_exactly_the_thirteen_data_tools() -> None:
     listed = await create_remote_server().list_tools()
 
     names = {tool.name for tool in listed}
-    assert names == {
+    query_tools = {
         "search_companies",
         "list_report_filings",
         "list_report_attachments",
@@ -198,7 +198,10 @@ async def test_remote_server_exposes_exactly_the_twelve_data_tools() -> None:
         "get_company_profile",
         "get_ownership_reports",
         "get_material_events",
+        "get_registration_statements",
     }
+    assert names == query_tools
+    assert len(names) == 13
     assert "export_report_excel" not in names
 
 
@@ -315,6 +318,7 @@ async def test_tools_list_over_http_needs_no_api_key() -> None:
         "get_company_profile",
         "get_ownership_reports",
         "get_material_events",
+        "get_registration_statements",
     }
     selection_tool = next(
         tool for tool in listed.tools if tool.name == "get_report_sections"
@@ -326,6 +330,27 @@ async def test_tools_list_over_http_needs_no_api_key() -> None:
         "section_ids",
         "section_kinds",
     }
+    registration_tool = next(
+        tool for tool in listed.tools if tool.name == "get_registration_statements"
+    )
+    assert set(registration_tool.input_schema["properties"]) == {
+        "corp_code",
+        "stmt_type",
+        "bgn_de",
+        "end_de",
+    }
+    assert registration_tool.description is not None
+    assert all(
+        stmt_type in registration_tool.description
+        for stmt_type in (
+            "equity_securities",
+            "debt_securities",
+            "depositary_receipts",
+            "merger",
+            "stock_exchange_transfer",
+            "division",
+        )
+    )
 
 
 @pytest.mark.anyio

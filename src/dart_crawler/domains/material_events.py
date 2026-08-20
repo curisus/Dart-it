@@ -19,7 +19,6 @@ Two things set this domain apart from its siblings:
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Final, Protocol
 
@@ -29,6 +28,7 @@ from dart_crawler.domains.query_guards import (
     MAX_TOPICS_PER_QUERY,
     GuardViolation,
     guard_corp_code,
+    guard_required_date_range,
     guard_row_count,
 )
 from dart_crawler.domains.registry import RegistryEntry, as_registry
@@ -44,10 +44,6 @@ from dart_crawler.result import (
 from dart_crawler.section_models import MAX_RESPONSE_TEXT_CHARS
 
 _SPLIT_NEXT_ACTION: Final = "기간을 좁히거나 event_type을 나누어 호출하세요."
-_DATE_PATTERN: Final = re.compile(r"^\d{8}$", re.ASCII)
-_DATE_FORMAT_NEXT_ACTION: Final = "bgn_de와 end_de를 YYYYMMDD 형식으로 입력하세요."
-_DATE_ORDER_NEXT_ACTION: Final = "bgn_de가 end_de보다 늦지 않도록 입력하세요."
-_DATE_REQUIRED_NEXT_ACTION: Final = "bgn_de와 end_de(YYYYMMDD)를 모두 입력하세요."
 _SUPPORTED_EVENT_TYPES_NEXT_ACTION: Final = (
     "지원 event_type 목록은 오류 details의 supported_event_types를 확인하세요."
 )
@@ -207,7 +203,7 @@ class MaterialEventService:
         """
         violation = (
             guard_corp_code(corp_code)
-            or _guard_required_date_range(bgn_de, end_de)
+            or guard_required_date_range(bgn_de, end_de)
             or self._guard_event_types(event_types)
         )
         if violation is not None:
@@ -353,49 +349,6 @@ class MaterialEventService:
                 next_action=_SUPPORTED_EVENT_TYPES_NEXT_ACTION,
             )
         return None
-
-
-def _guard_required_date_range(bgn_de: str, end_de: str) -> GuardViolation | None:
-    """Reject a missing, malformed, or inverted receipt-date range.
-
-    Unlike ownership.py's _guard_date_range (both bounds optional, an empty
-    string means "no bound"), DS005 material events REQUIRE both bgn_de and
-    end_de: OpenDART's own endpoint demands the range rather than answering
-    an unbounded history, so a blank bound is rejected here rather than
-    passed through.
-    """
-    for field_name, value in (("bgn_de", bgn_de), ("end_de", end_de)):
-        if not value:
-            return GuardViolation(
-                error_info(
-                    ErrorCode.INVALID_INPUT,
-                    "접수일 기간이 비어 있습니다.",
-                    retryable=False,
-                    details={"field": field_name},
-                ),
-                next_action=_DATE_REQUIRED_NEXT_ACTION,
-            )
-        if _DATE_PATTERN.match(value) is None:
-            return GuardViolation(
-                error_info(
-                    ErrorCode.INVALID_INPUT,
-                    "접수일 형식이 올바르지 않습니다.",
-                    retryable=False,
-                    details={"field": field_name, "value": value},
-                ),
-                next_action=_DATE_FORMAT_NEXT_ACTION,
-            )
-    if bgn_de > end_de:
-        return GuardViolation(
-            error_info(
-                ErrorCode.INVALID_INPUT,
-                "bgn_de가 end_de보다 늦습니다.",
-                retryable=False,
-                details={"bgn_de": bgn_de, "end_de": end_de},
-            ),
-            next_action=_DATE_ORDER_NEXT_ACTION,
-        )
-    return None
 
 
 def _supported_event_types(registry: Mapping[str, RegistryEntry]) -> list[JsonValue]:

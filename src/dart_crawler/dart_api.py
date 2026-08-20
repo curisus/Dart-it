@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from dart_crawler.api_models import (
     CompanyProfile,
+    DartGroup,
+    DartGroupsResponse,
     DartListResponse,
     DartListRow,
     DartRowsResponse,
@@ -358,6 +360,54 @@ class DartApi:
             unavailable_message="OpenDART 주요사항보고 정보를 수집할 수 없습니다.",
             parse_failure_message="OpenDART 주요사항보고 응답 형식을 해석할 수 없습니다.",
         )
+
+    def fetch_registration_statement_groups(
+        self,
+        endpoint: str,
+        corp_code: str,
+        bgn_de: str,
+        end_de: str,
+    ) -> Result[tuple[DartGroup[JsonObject], ...]]:
+        """Fetch DS006 securities-registration groups for one endpoint."""
+        if _ENDPOINT_NAME_PATTERN.match(endpoint) is None:
+            return Result.failure(
+                error_info(
+                    ErrorCode.INVALID_INPUT,
+                    "증권신고서 endpoint 형식이 올바르지 않습니다.",
+                    retryable=False,
+                    details={"endpoint": endpoint},
+                )
+            )
+        response = self._get_json(
+            f"{_OPEN_DART_BASE}/{endpoint}.json",
+            {"corp_code": corp_code, "bgn_de": bgn_de, "end_de": end_de},
+        )
+        if not response.ok or response.data is None:
+            return Result.failure(
+                response.error
+                if response.error is not None
+                else error_info(
+                    ErrorCode.UPSTREAM_UNAVAILABLE,
+                    "OpenDART 증권신고서 정보를 수집할 수 없습니다.",
+                    retryable=True,
+                ),
+                warnings=response.warnings,
+            )
+        try:
+            parsed = DartGroupsResponse[JsonObject].model_validate_json(
+                response.data.content
+            )
+        except ValidationError:
+            return Result.failure(
+                error_info(
+                    ErrorCode.PARSE_FAILED,
+                    "OpenDART 증권신고서 응답 형식을 해석할 수 없습니다.",
+                    retryable=False,
+                )
+            )
+        if parsed.status != "000":
+            return Result.failure(_dart_status_error(parsed.status))
+        return Result.success(parsed.group)
 
     def fetch_company_profile(self, corp_code: str) -> Result[CompanyProfile]:
         """Fetch OpenDART DS001 company master data (company.json) for one company.
