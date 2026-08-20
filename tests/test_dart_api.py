@@ -639,3 +639,75 @@ def test_fetch_ownership_rows_rejects_malformed_endpoint_without_http_call() -> 
     assert result.error is not None
     assert result.error.code is ErrorCode.INVALID_INPUT
     assert client.requests == []
+
+
+# --- fetch_material_event_rows (DS005 주요사항보고) -----------------------------
+
+
+def test_fetch_material_event_rows_builds_url_with_date_range_params() -> None:
+    body = b'{"status":"000","message":"OK","list":[]}'
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_material_event_rows(
+        "dfOcr", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is True
+    assert client.requests[0][0].endswith("dfOcr.json")
+    assert client.requests[0][1] == {
+        "crtfc_key": "test-key",
+        "corp_code": "00126380",
+        "bgn_de": "20240101",
+        "end_de": "20241231",
+    }
+
+
+def test_fetch_material_event_rows_preserves_unknown_fields() -> None:
+    body = (
+        b'{"status":"000","message":"OK","list":[{"corp_code":"00126380",'
+        b'"rcept_no":"20240115000123","totally_unknown_field":"kept"}]}'
+    )
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_material_event_rows(
+        "cmpMgDecsn", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data[0]["rcept_no"] == "20240115000123"
+    assert result.data[0]["totally_unknown_field"] == "kept"
+
+
+def test_fetch_material_event_rows_maps_not_found_status() -> None:
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"013","message":"no data"}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_material_event_rows(
+        "dfOcr", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+
+
+def test_fetch_material_event_rows_rejects_malformed_endpoint_without_http_call() -> (
+    None
+):
+    # Given: an empty response list means any HTTP call would raise IndexError
+    client = FakeHttpClient([])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_material_event_rows(
+        "bad endpoint!", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert client.requests == []

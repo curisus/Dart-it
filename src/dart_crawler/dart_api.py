@@ -334,6 +334,31 @@ class DartApi:
             ),
         )
 
+    def fetch_material_event_rows(
+        self,
+        endpoint: str,
+        corp_code: str,
+        bgn_de: str,
+        end_de: str,
+    ) -> Result[tuple[JsonObject, ...]]:
+        """Fetch DS005 주요사항보고 rows for one event type and receipt-date range."""
+        if _ENDPOINT_NAME_PATTERN.match(endpoint) is None:
+            return Result.failure(
+                error_info(
+                    ErrorCode.INVALID_INPUT,
+                    "주요사항보고 endpoint 형식이 올바르지 않습니다.",
+                    retryable=False,
+                    details={"endpoint": endpoint},
+                )
+            )
+        return self._fetch_rows(
+            f"{_OPEN_DART_BASE}/{endpoint}.json",
+            {"corp_code": corp_code, "bgn_de": bgn_de, "end_de": end_de},
+            DartRowsResponse[JsonObject],
+            unavailable_message="OpenDART 주요사항보고 정보를 수집할 수 없습니다.",
+            parse_failure_message="OpenDART 주요사항보고 응답 형식을 해석할 수 없습니다.",
+        )
+
     def fetch_company_profile(self, corp_code: str) -> Result[CompanyProfile]:
         """Fetch OpenDART DS001 company master data (company.json) for one company.
 

@@ -28,6 +28,10 @@ from dart_crawler.domains.financials import (
     FinancialStatementData,
     MajorAccountData,
 )
+from dart_crawler.domains.material_events import (
+    MaterialEventData,
+    MaterialEventService,
+)
 from dart_crawler.domains.ownership import OwnershipReportData, OwnershipService
 from dart_crawler.domains.report_topics import ReportTopicData, ReportTopicService
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
@@ -146,6 +150,18 @@ class CrawlerService:
     ) -> Result[OwnershipReportData]:
         """Return DS004 ownership-disclosure rows for one company and report type."""
         return OwnershipService(self._api).get(corp_code, report_type, bgn_de, end_de)
+
+    def get_material_events(
+        self,
+        corp_code: str,
+        event_types: tuple[str, ...],
+        bgn_de: str,
+        end_de: str,
+    ) -> Result[MaterialEventData]:
+        """Return DS005 주요사항보고 rows for the event types and receipt-date range."""
+        return MaterialEventService(self._api).get(
+            corp_code, event_types, bgn_de, end_de
+        )
 
     def list_report_filings(
         self,
