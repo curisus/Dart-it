@@ -6,7 +6,7 @@ import httpx2
 import pytest
 
 from dart_crawler.attachments import AttachmentService
-from dart_crawler.dart_api import DartApi, RetryPolicy
+from dart_crawler.dart_api import DartApi, FinancialQuery, RetryPolicy
 from dart_crawler.http_client import HttpResponse
 from dart_crawler.result import ErrorCode
 
@@ -496,3 +496,35 @@ def test_document_download_returns_pk_payload_untouched() -> None:
     assert result.ok is True
     assert result.data == archive_body
     assert result.error is None
+
+
+def test_fetch_financial_accounts_parses_rows_without_fs_div() -> None:
+    # fnlttSinglAcntAll rows do not echo the fs_div request parameter,
+    # so a real-shape row without it must still parse (regression:
+    # a required fs_div made every live payload fail with PARSE_FAILED).
+    body = (
+        '{"status":"000","message":"OK","list":[{"rcept_no":"20250311000001",'
+        '"reprt_code":"11011","bsns_year":"2024","corp_code":"00126380",'
+        '"sj_div":"BS","sj_nm":"재무상태표","account_id":"ifrs-full_Assets",'
+        '"account_nm":"자산총계","account_detail":"-","thstrm_nm":"제 56 기",'
+        '"thstrm_amount":"1000","frmtrm_nm":"제 55 기","frmtrm_amount":"900",'
+        '"bfefrmtrm_nm":"제 54 기","bfefrmtrm_amount":"800","ord":"1",'
+        '"currency":"KRW"}]}'
+    ).encode()
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_financial_accounts(
+        FinancialQuery(
+            corp_code="00126380",
+            business_year=2024,
+            report_code="11011",
+            statement_scope="OFS",
+        )
+    )
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data[0].fs_div == ""
+    assert result.data[0].account_nm == "자산총계"
+    assert result.data[0].bfefrmtrm_amount == "800"
