@@ -11,14 +11,14 @@
 
 | 결정 | 선택 |
 |---|---|
-| 도구 목록 | **5개**: 기존 3개(search_companies, list_report_filings, list_report_attachments) + 신규 `list_report_sections`(구역 목차) + `get_report_sections`(선택 구역 표 데이터). `export_report_excel`은 원격판 제외·로컬판 유지 |
+| 도구 목록 | **5개**: 기존 3개(search_companies, list_report_filings, list_report_attachments) + 신규 `list_report_sections`(구역 목차) + `get_report_sections`(선택 구역 표 데이터). `export_report_excel`은 원격판 제외·로컬판 유지. **2026-08-20 보완**: 도구 정의를 `tool_catalog.py`로 통합하고 로컬 표면을 "조회 5종 + export"의 superset으로 확장 — `docs/tool_surface_architecture.md` 참조 |
 | 저장소 구조 | **현 저장소 확장** — api/ 진입점 + vercel.json, src/dart_crawler 공유(DRY) |
 | 키 전달 | **헤더 필수** — 요청마다 HTTP 헤더로 전달, 서버 env 폴백 없음, URL 노출 금지. **2026-08-20 일부 번복(사용자 AskUserQuestion 승인)**: claude.ai 커넥터의 Request headers 기능이 베타 미배포인 계정은 헤더를 전혀 보낼 수 없음이 확인되어, 최후 폴백으로 URL `?key=` 쿼리 전달을 허용. 헤더가 항상 우선이며 OAuth 구현은 공개 확산 시점까지 보류 |
 | 접속 방식 | **MCP streamable-http 단독** |
 
 ## 탐색으로 확정된 사실 (설계 근거, 전부 file:line 검증)
 
-- 기존 3개 도구는 이미 순수 데이터 반환. 파일시스템 결합은 export 경로(excel_export.py:137, workbook_writer.py:54-65, output_file.py)와 `load_settings`(settings.py:80 `is_dir()`, :47 `.env`)뿐. 전역 상태·캐시 0건 → **이미 무상태 구조**. 접합점은 `_run_with_settings`(mcp_server.py:68-73).
+- 기존 3개 도구는 이미 순수 데이터 반환. 파일시스템 결합은 export 경로(excel_export.py:137, workbook_writer.py:54-65, output_file.py)와 `load_settings`(settings.py:80 `is_dir()`, :47 `.env`)뿐. 전역 상태·캐시 0건 → **이미 무상태 구조**. 접합점은 `_run_with_settings`(mcp_server.py:36-47, 카탈로그 통합 후 위치).
 - 파싱 결과는 Excel 이전에 `ParsedDocument → DocumentSection → DocumentBlock`(document_model.py:43-99)으로 존재. 주석은 `주석 N` 개별 섹션으로 분할됨(document_model.py:257-291). 섹션에 안정적 ID는 없음(인덱스+제목뿐).
 - 실측: 감사보고서 1건 = 섹션 48~59개, 전체 JSON 159~533KB(AI 컨텍스트에 과대), 핵심 재무제표 4종 ≈ 전체 셀의 9%, 단일 주석 최대 3,320셀 → 구역 선택 구조 필수.
 - MCP SDK 2.0.0(설치본 검증): `Context.headers`로 도구 함수 안에서 HTTP 헤더 접근(mcpserver/context.py:277-285), sync 도구는 스레드로 실행되어 async 전환 불필요(mcpserver/resolve.py:553-556), `streamable_http_app(json_response, stateless_http, transport_security, ...) -> Starlette`(mcpserver/server.py:1218-1245). **함정**: transport_security 미지정 시 DNS rebinding 보호 자동 활성화로 Vercel에서 전 요청 421 거부(lowlevel/server.py:738-744) → 명시적 비활성화 필요.
@@ -116,14 +116,14 @@ class ReportSectionData(BaseModel):    # get_report_sections 응답
 | `src/dart_crawler/section_models.py` | 신규 | 위 모델 + 순수 함수 |
 | `src/dart_crawler/crawler_service.py` | 변경 | 생성자 축소, `_load_parsed_document` 추출, `list_report_sections`/`get_report_sections` 추가 |
 | `src/dart_crawler/remote_server.py` | 신규 | `create_remote_server() -> MCPServer`(도구 5개, ctx 주입), `_api_key_from_headers`, `_with_remote_service`, `build_app(*, path="/api/mcp") -> Starlette` |
-| `src/dart_crawler/mcp_server.py` | 변경 | CrawlerService 호출부만 수정(stdio·도구 4개 유지) |
+| `src/dart_crawler/mcp_server.py` | 변경 | CrawlerService 호출부만 수정(stdio·도구 4개 유지) — **2026-08-20 카탈로그 통합으로 조회 5종+export 6종의 superset으로 확장** |
 | `api/mcp.py` | 신규 | `app = build_app()` (파일 경로=URL `/api/mcp`) |
 | `vercel.json` | 신규 | `{"functions": {"api/mcp.py": {"maxDuration": 300}}}` |
 | `requirements.txt` | 신규 | `uv export --no-dev --no-emit-project --no-hashes` + 로컬 패키지 `.` 한 줄 |
 | `tests/test_section_models.py`, `tests/test_remote_server.py` | 신규 | 아래 TDD 목록 |
 | `scripts/validate_remote_live.py` | 신규 | 라이브 검증 클라이언트 |
 
-- **로컬/원격은 별도 MCPServer 인스턴스** (표면 4개 vs 5개, 키 소스 상이). 공유는 서비스 계층에서 달성, 도구 본문은 위임 한 줄.
+- **로컬/원격은 별도 MCPServer 인스턴스** (표면 6개 vs 5개, 키 소스 상이). 공유는 서비스 계층에 더해 **도구 카탈로그 계층(`tool_catalog.py`, 2026-08-20)**에서 달성 — 도구 정의는 카탈로그에 한 번만 존재하고 표면은 러너만 다르다.
 - `build_app`: `streamable_http_app(streamable_http_path=path, json_response=True(단일 JSON 응답·서버리스 친화), stateless_http=True, transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))` — 마지막 항목이 Vercel 421 함정 회피(인증은 요청별 키가 담당).
 - `build_app`은 그 위에 **POST 전용 가드**(`_PostOnlyEndpoint`, 순수 ASGI 미들웨어)를 씌운다. json_response+stateless 조합에서는 서버→클라이언트 스트림에 실을 것이 아예 없는데도 SDK는 GET에 SSE 스트림을 열고 클라이언트가 끊을 때까지 유지한다(streamable_http.py:687 `_handle_get_request`). 서버리스에서는 **인증 없는 GET 한 건이 함수를 최대 실행시간(300초)까지 점유**하므로, MCP 경로의 비-POST 요청은 즉시 `405 Allow: POST`로 끝낸다. SDK 기본 405가 내보내던 `Allow: GET, POST, DELETE`(GET을 쓸 수 있다고 광고)도 함께 바로잡힌다.
 

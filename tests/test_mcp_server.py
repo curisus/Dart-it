@@ -12,7 +12,7 @@ from dart_crawler.result import Result
 
 
 @pytest.mark.anyio
-async def test_mcp_registers_four_tools_and_returns_result_envelope(
+async def test_mcp_registers_the_local_superset_and_returns_result_envelope(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -25,6 +25,8 @@ async def test_mcp_registers_four_tools_and_returns_result_envelope(
         "search_companies",
         "list_report_filings",
         "list_report_attachments",
+        "list_report_sections",
+        "get_report_sections",
         "export_report_excel",
     }
 

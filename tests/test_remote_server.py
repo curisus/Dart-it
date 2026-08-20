@@ -196,17 +196,18 @@ async def test_remote_server_exposes_exactly_the_five_data_tools() -> None:
 
 
 @pytest.mark.anyio
-async def test_local_server_keeps_exactly_its_four_tools() -> None:
-    listed = await local_mcp.list_tools()
+async def test_local_surface_is_the_remote_surface_plus_the_export_group() -> None:
+    """The catalog is the single source of coverage for both surfaces."""
+    remote = {tool.name: tool for tool in await create_remote_server().list_tools()}
+    local = {tool.name: tool for tool in await local_mcp.list_tools()}
 
-    names = {tool.name for tool in listed}
-    assert names == {
-        "search_companies",
-        "list_report_filings",
-        "list_report_attachments",
-        "export_report_excel",
-    }
-    assert "list_report_sections" not in names
+    assert set(local) == set(remote) | {"export_report_excel"}
+    # Every shared tool must be byte-identical on both surfaces: same
+    # description, same advertised parameters. A divergence means a tool was
+    # defined outside the catalog.
+    for name, remote_tool in remote.items():
+        assert local[name].description == remote_tool.description
+        assert local[name].input_schema == remote_tool.input_schema
 
 
 async def _post_jsonrpc(
