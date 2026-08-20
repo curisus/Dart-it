@@ -118,12 +118,12 @@ claude mcp add --transport http --scope user dart_remote https://dart-mcp-remote
    - `get_financial_statements(corp_code, bsns_year, reprt_code, fs_div="CFS")`: 한 회사의 한 보고서 기간에 대한 전체 공식 계정과목을 받습니다. `fs_div`는 기본값 `CFS`(연결) 또는 `OFS`(별도)이며, 연결재무제표가 없는 회사는 `fs_div="OFS"`로 다시 시도하라는 안내와 함께 거부됩니다.
    - `get_major_accounts(corp_codes, bsns_year, reprt_code)`: 최대 10개 회사의 주요 재무상태표·손익계산서 계정을 한 번에 받아 회사 간 비교에 사용합니다. 계정 상세는 `get_financial_statements`를 사용하세요.
    - `get_financial_indicators(corp_codes, bsns_year, reprt_code, idx_cl_code)`: 최대 10개 회사의 재무지표 한 분류를 받습니다. `idx_cl_code`는 `M210000`(수익성), `M220000`(안정성), `M230000`(성장성), `M240000`(활동성) 중 하나입니다.
-5. 감사인 관련 정보만 확인하려면 `get_report_topics(corp_code, bsns_year, reprt_code, topics)`를 사용합니다. `topics`에는 아래 중 하나 이상, 최대 10개까지 지정할 수 있습니다(현재 3종 제공, 이후 확대 예정).
+5. 정기보고서 주요정보(DS002) 28종을 확인하려면 `get_report_topics(corp_code, bsns_year, reprt_code, topics)`를 사용합니다. `topics`에는 아래 중 하나 이상, 최대 10개까지 지정할 수 있습니다. 배당·주주(최대주주·소액주주)·임원·보수·채무증권 미상환 잔액·자금 사용내역 등을 포괄하며, 그중 감사인 관련 3종은 다음과 같습니다.
    - `audit_opinion`: 회계감사인의 명칭 및 감사의견
    - `audit_service_contract`: 감사용역 체결현황
    - `non_audit_service_contract`: 회계감사인과의 비감사용역 계약체결 현황
 
-   결과는 요청한 `topics` 순서대로 반환되며, topic별 행 수(`row_count`)와 원문 필드를 그대로 담습니다. 자료가 없는 topic은 빈 목록으로 처리되고 경고가 함께 반환되며, 요청한 모든 topic이 비어 있으면 실패로 처리됩니다.
+   나머지 topic 키와 라벨은 지원하지 않는 topic으로 호출했을 때 오류 상세(`supported_topics`)에 전체 목록이 함께 반환됩니다. 결과는 요청한 `topics` 순서대로 반환되며, topic별 행 수(`row_count`)와 원문 필드를 그대로 담습니다. 자료가 없는 topic은 빈 목록으로 처리되고 경고가 함께 반환되며, 요청한 모든 topic이 비어 있으면 실패로 처리됩니다.
 
 ## 출력 파일
 

@@ -98,6 +98,33 @@ def test_as_registry_rejects_a_duplicate_endpoint() -> None:
         )
 
 
+def test_registry_has_all_28_ds002_topics() -> None:
+    # Guards against an accidental deletion during registry maintenance
+    assert len(REPORT_TOPICS) == 28
+
+
+@pytest.mark.parametrize("topic", list(REPORT_TOPICS.values()), ids=lambda t: t.key)
+def test_get_routes_each_topic_to_its_own_endpoint_and_echoes_its_label(
+    topic: ReportTopic,
+) -> None:
+    # Given: one fixture row for this topic's endpoint only
+    rows = (_topic_row(),)
+    source = RecordingReportTopicSource(results={topic.endpoint: Result.success(rows)})
+    service = ReportTopicService(source)
+
+    # When
+    result = service.get(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, (topic.key,))
+
+    # Then: the single topic routed to exactly this topic's endpoint
+    assert result.ok is True
+    assert result.data is not None
+    assert len(result.data.topics) == 1
+    assert result.data.topics[0].topic == topic.key
+    assert result.data.topics[0].label == topic.label
+    assert result.data.topics[0].rows == rows
+    assert source.calls == [(topic.endpoint, _CORP_CODE, _BSNS_YEAR, _REPRT_CODE)]
+
+
 # --- docstring drift guard ---------------------------------------------------
 
 
