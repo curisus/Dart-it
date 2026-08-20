@@ -64,7 +64,7 @@ uv run dart-crawler-mcp
 4. `export_report_excel(rcept_no, attachment_id)`로 수집·검증·생성합니다. 결과에는 출력 경로, 전체·부분수집 상태, 기존 파일 재사용 여부, 경고가 포함됩니다.
 5. 검색·계산 가능한 Excel 대신 원문 전체를 그대로 옮긴 문서가 필요하면 `export_report_markdown(rcept_no, attachment_id)`을 사용합니다. 첨부문서의 모든 구역(의견, 재무제표, 주석, 기타 서술)을 원문 순서대로 마크다운 파일 하나에 옮기며 금액·문구는 그대로(verbatim) 보존합니다. Excel과 달리 핵심 재무제표가 빠져 있어도 실패하지 않고, 있는 그대로 생성한 뒤 `missing_sections`와 `collection_status`로 무엇이 빠졌는지 알려줍니다.
 
-파일 없이 데이터만 보려면 원격 서버와 동일한 `list_report_sections`·`get_report_sections`·`get_financial_statements`·`get_major_accounts`·`get_financial_indicators`(아래 원격 도구 사용 순서 참조)도 로컬에서 그대로 사용할 수 있습니다. 로컬 서버는 전체 기능을 제공하며 API 키가 컴퓨터 밖으로 나가지 않고, 원격 서버는 설치 없이 모든 조회 도구를 제공합니다(파일 반출은 로컬 전용).
+파일 없이 데이터만 보려면 원격 서버와 동일한 `list_report_sections`·`get_report_sections`·`get_financial_statements`·`get_major_accounts`·`get_financial_indicators`·`get_report_topics`·`get_company_profile`·`get_ownership_reports`(아래 원격 도구 사용 순서 참조)도 로컬에서 그대로 사용할 수 있습니다. 로컬 서버는 전체 기능을 제공하며 API 키가 컴퓨터 밖으로 나가지 않고, 원격 서버는 설치 없이 모든 조회 도구를 제공합니다(파일 반출은 로컬 전용).
 
 모든 도구는 `ok`, 성공 시 `data`, 실패 시 `error { code, message, retryable, details }`, `warnings`, `next_action` 구조를 사용합니다. API 키나 비밀번호는 오류 내용에 넣지 않습니다.
 
@@ -77,7 +77,7 @@ uv run dart-crawler-mcp
   - 기본: `X-OpenDART-API-Key: 발급받은_키` 헤더
   - 대체: `Authorization: Bearer 발급받은_키` 헤더
   - 헤더를 못 쓰는 클라이언트용: URL 뒤에 `?key=발급받은_키`
-- 도구: `search_companies`, `list_report_filings`, `list_report_attachments`, `list_report_sections`, `get_report_sections`, `get_financial_statements`, `get_major_accounts`, `get_financial_indicators`, `get_report_topics` 9개 (조회 전용)
+- 도구: `search_companies`, `list_report_filings`, `list_report_attachments`, `list_report_sections`, `get_report_sections`, `get_financial_statements`, `get_major_accounts`, `get_financial_indicators`, `get_report_topics`, `get_company_profile`, `get_ownership_reports` 11개 (조회 전용)
 - Excel 파일 생성(`export_report_excel`)은 원격 서버가 파일을 저장할 위치가 없어 제공하지 않습니다. 로컬 서버에서만 가능합니다.
 
 ### Claude for Excel에서 사용하기
@@ -124,6 +124,8 @@ claude mcp add --transport http --scope user dart_remote https://dart-mcp-remote
    - `non_audit_service_contract`: 회계감사인과의 비감사용역 계약체결 현황
 
    나머지 topic 키와 라벨은 지원하지 않는 topic으로 호출했을 때 오류 상세(`supported_topics`)에 전체 목록이 함께 반환됩니다. 결과는 요청한 `topics` 순서대로 반환되며, topic별 행 수(`row_count`)와 원문 필드를 그대로 담습니다. 자료가 없는 topic은 빈 목록으로 처리되고 경고가 함께 반환되며, 요청한 모든 topic이 비어 있으면 실패로 처리됩니다.
+6. `get_company_profile(corp_code)`로 기업개황(DS001)을 조회합니다. 회사명(국문·영문), 종목명·종목코드, 대표자명, 법인구분(`corp_cls`), 사업자·법인등록번호, 주소, 홈페이지·IR URL, 전화·팩스번호, 업종코드, 설립일, 결산월을 원문 그대로 반환합니다.
+7. `get_ownership_reports(corp_code, report_type, bgn_de, end_de)`로 지분공시(DS004)를 조회합니다. `report_type`은 `major_holding`(5% 대량보유 상황보고) 또는 `insider_ownership`(임원·주요주주 소유보고) 중 하나이며, 한 번의 호출은 한 가지 보고 유형만 받습니다. 행은 원문 필드 그대로 반환되고, 해당 보고 유형의 자료가 없는 회사도 실패하지 않고 빈 목록과 경고로 응답합니다. 지원하지 않는 `report_type`은 오류 상세에 전체 목록과 함께 거부됩니다. `bgn_de`·`end_de`(둘 다 선택, `YYYYMMDD`)로 접수일 기간을 좁힐 수 있으며 비워두면 그쪽 경계는 열려 있습니다. 삼성전자의 `insider_ownership`처럼 보고 이력이 많아 응답 행 수 한도를 넘는 회사는 이 기간으로 나누어 다시 호출해야 합니다. 응답의 `total_row_count`는 기간 필터 적용 전 행 수, `returned_row_count`는 필터 적용 후 실제 반환된 행 수입니다.
 
 ## 출력 파일
 

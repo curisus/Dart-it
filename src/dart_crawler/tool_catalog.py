@@ -20,11 +20,13 @@ from mcp.server.mcpserver import Context
 
 from dart_crawler.crawler_service import CrawlerService
 from dart_crawler.domain import Attachment, Company, Filing
+from dart_crawler.domains.company_profile import CompanyProfileData
 from dart_crawler.domains.financials import (
     FinancialIndicatorData,
     FinancialStatementData,
     MajorAccountData,
 )
+from dart_crawler.domains.ownership import OwnershipReportData
 from dart_crawler.domains.report_topics import ReportTopicData
 from dart_crawler.excel_export import ExportedFile
 from dart_crawler.markdown_export import MarkdownExportedFile
@@ -52,7 +54,20 @@ class ServiceRunner(Protocol):
 
 
 def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
-    """Register the nine read-only query tools shared by every surface."""
+    """Register the eleven read-only query tools shared by every surface.
+
+    Split into three grouped helpers purely to stay under the mccabe
+    complexity limit (each nested ``@mcp.tool()`` definition counts as one
+    branch of the enclosing function) — the grouping carries no meaning
+    beyond that; every tool is still part of one flat catalog.
+    """
+    _register_document_tools(mcp, run)
+    _register_financial_tools(mcp, run)
+    _register_disclosure_tools(mcp, run)
+
+
+def _register_document_tools(mcp: MCPServer, run: ServiceRunner) -> None:
+    """Register the filing-discovery and section-content tools."""
 
     @mcp.tool()
     def search_companies(
@@ -132,6 +147,10 @@ def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
                 section_kinds,
             ),
         )
+
+
+def _register_financial_tools(mcp: MCPServer, run: ServiceRunner) -> None:
+    """Register the DS003 official financial-data tools."""
 
     @mcp.tool()
     def get_financial_statements(
@@ -215,6 +234,10 @@ def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
             ),
         )
 
+
+def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
+    """Register the DS002/DS001/DS004 topic, profile, and ownership tools."""
+
     @mcp.tool()
     def get_report_topics(
         corp_code: str,
@@ -254,6 +277,57 @@ def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
                 bsns_year,
                 reprt_code,
                 topics,
+            ),
+        )
+
+    @mcp.tool()
+    def get_company_profile(
+        corp_code: str,
+        ctx: Context,
+    ) -> Result[CompanyProfileData]:
+        """Return OpenDART DS001 company master data for one company.
+
+        corp_code comes from search_companies (an 8-digit DART code, never a
+        stock ticker). Fields include the Korean and English company names,
+        CEO name, corp_cls (market classification), registration numbers
+        (jurir_no business registration, bizr_no corporate registration),
+        address, homepage and IR URLs, phone and fax numbers, industry code,
+        establishment date, and fiscal year-end month.
+        """
+        return run(ctx, lambda service: service.get_company_profile(corp_code))
+
+    @mcp.tool()
+    def get_ownership_reports(
+        corp_code: str,
+        report_type: str,
+        ctx: Context,
+        bgn_de: str = "",
+        end_de: str = "",
+    ) -> Result[OwnershipReportData]:
+        """Return OpenDART DS004 ownership-disclosure rows for one company and report type.
+
+        corp_code comes from search_companies (an 8-digit DART code, never a
+        stock ticker). report_type selects the report family: "major_holding"
+        for 5%-rule large-holding reports, or "insider_ownership" for
+        executives and major shareholders ownership reports. Rows are
+        returned verbatim with every source field. A company with no reports
+        of the requested type still succeeds, with zero rows and a
+        partial-collection warning rather than failing. An unknown
+        report_type fails with the supported list in its error details.
+
+        bgn_de/end_de (both optional, YYYYMMDD) narrow the rows to those
+        whose receipt date falls within [bgn_de, end_de], inclusive; leave
+        either side blank for an open bound. A company with a large report
+        history (e.g. a large-cap's insider_ownership rows) MUST narrow this
+        range when the response exceeds the row budget — the error's
+        next_action says so. The response's total_row_count is the row count
+        before this filter narrowed it; returned_row_count is the count
+        after filtering, i.e. the number of rows actually in `rows`.
+        """
+        return run(
+            ctx,
+            lambda service: service.get_ownership_reports(
+                corp_code, report_type, bgn_de, end_de
             ),
         )
 

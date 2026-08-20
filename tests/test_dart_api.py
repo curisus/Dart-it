@@ -528,3 +528,114 @@ def test_fetch_financial_accounts_parses_rows_without_fs_div() -> None:
     assert result.data[0].fs_div == ""
     assert result.data[0].account_nm == "자산총계"
     assert result.data[0].bfefrmtrm_amount == "800"
+
+
+# --- fetch_company_profile (DS001 company.json) -------------------------------
+
+
+def test_fetch_company_profile_builds_url_and_parses_top_level_fields() -> None:
+    body = (
+        '{"status":"000","message":"OK","corp_code":"00126380",'
+        '"corp_name":"삼성전자","corp_name_eng":"SAMSUNG ELECTRONICS CO,.LTD",'
+        '"stock_name":"삼성전자","stock_code":"005930","ceo_nm":"한종희",'
+        '"corp_cls":"Y","jurir_no":"1301110006246",'
+        '"bizr_no":"1248100998","adres":"경기도 수원시 영통구 삼성로 129 (매탄동)",'
+        '"hm_url":"www.samsung.com/sec","ir_url":"www.samsung.com/sec/ir",'
+        '"phn_no":"02-2255-0114","fax_no":"031-200-7538",'
+        '"induty_code":"264","est_dt":"19690113","acc_mt":"12"}'
+    ).encode()
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_company_profile("00126380")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.corp_name == "삼성전자"
+    assert result.data.corp_name_eng == "SAMSUNG ELECTRONICS CO,.LTD"
+    assert result.data.ceo_nm == "한종희"
+    assert result.data.est_dt == "19690113"
+    assert result.data.acc_mt == "12"
+    assert client.requests[0][0].endswith("company.json")
+    assert client.requests[0][1]["corp_code"] == "00126380"
+    assert client.requests[0][1]["crtfc_key"] == "test-key"
+
+
+def test_fetch_company_profile_not_found_status_maps_to_not_found() -> None:
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"013","message":"no data"}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_company_profile("00126380")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+
+
+def test_fetch_company_profile_malformed_json_maps_to_parse_failed() -> None:
+    client = FakeHttpClient([HttpResponse(200, {}, b"not json at all")])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_company_profile("00126380")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.PARSE_FAILED
+
+
+# --- fetch_ownership_rows (DS004 majorstock/elestock) --------------------------
+
+
+def test_fetch_ownership_rows_builds_url_for_major_holding_endpoint() -> None:
+    body = b'{"status":"000","message":"OK","list":[]}'
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_ownership_rows("majorstock", "00126380")
+
+    assert result.ok is True
+    assert client.requests[0][0].endswith("majorstock.json")
+    assert client.requests[0][1] == {"crtfc_key": "test-key", "corp_code": "00126380"}
+
+
+def test_fetch_ownership_rows_builds_url_for_insider_ownership_endpoint() -> None:
+    body = b'{"status":"000","message":"OK","list":[]}'
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_ownership_rows("elestock", "00126380")
+
+    assert result.ok is True
+    assert client.requests[0][0].endswith("elestock.json")
+    assert client.requests[0][1] == {"crtfc_key": "test-key", "corp_code": "00126380"}
+
+
+def test_fetch_ownership_rows_preserves_unknown_fields() -> None:
+    body = (
+        '{"status":"000","message":"OK","list":[{"corp_code":"00126380",'
+        '"report_tp":"신규","totally_unknown_field":"kept"}]}'
+    ).encode()
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_ownership_rows("majorstock", "00126380")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data[0]["report_tp"] == "신규"
+    assert result.data[0]["totally_unknown_field"] == "kept"
+
+
+def test_fetch_ownership_rows_rejects_malformed_endpoint_without_http_call() -> None:
+    # Given: an empty response list means any HTTP call would raise IndexError
+    client = FakeHttpClient([])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_ownership_rows("bad endpoint!", "00126380")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert client.requests == []

@@ -18,12 +18,17 @@ from dart_crawler.document_model import ParsedDocument
 from dart_crawler.document_parser import parse_attachment
 from dart_crawler.document_validation import validate_document
 from dart_crawler.domain import Attachment, Company, Filing, ReportKind
+from dart_crawler.domains.company_profile import (
+    CompanyProfileData,
+    CompanyProfileService,
+)
 from dart_crawler.domains.financials import (
     FinancialIndicatorData,
     FinancialsService,
     FinancialStatementData,
     MajorAccountData,
 )
+from dart_crawler.domains.ownership import OwnershipReportData, OwnershipService
 from dart_crawler.domains.report_topics import ReportTopicData, ReportTopicService
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
 from dart_crawler.filing_service import FilingService
@@ -127,6 +132,20 @@ class CrawlerService:
     ) -> Result[ReportTopicData]:
         """Return DS002 regular-report key-information rows for the topics."""
         return ReportTopicService(self._api).get(corp_code, bsns_year, reprt_code, topics)
+
+    def get_company_profile(self, corp_code: str) -> Result[CompanyProfileData]:
+        """Return DART DS001 company master data for one corp_code."""
+        return CompanyProfileService(self._api).get(corp_code)
+
+    def get_ownership_reports(
+        self,
+        corp_code: str,
+        report_type: str,
+        bgn_de: str = "",
+        end_de: str = "",
+    ) -> Result[OwnershipReportData]:
+        """Return DS004 ownership-disclosure rows for one company and report type."""
+        return OwnershipService(self._api).get(corp_code, report_type, bgn_de, end_de)
 
     def list_report_filings(
         self,
