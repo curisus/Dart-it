@@ -32,6 +32,9 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.vercel]
+entrypoint = "api.mcp:app"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/dart_crawler"]
 
