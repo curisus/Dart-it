@@ -63,7 +63,7 @@ uv run dart-crawler-mcp
 3. `list_report_attachments(rcept_no)`에서 별도 또는 연결 첨부문서를 선택합니다. 식별자는 `opendart:접수번호:ZIP파일명` 또는 `viewer:접수번호:dcmNo`입니다.
 4. `export_report_excel(rcept_no, attachment_id)`로 수집·검증·생성합니다. 결과에는 출력 경로, 전체·부분수집 상태, 기존 파일 재사용 여부, 경고가 포함됩니다.
 
-파일 없이 데이터만 보려면 원격 서버와 동일한 `list_report_sections`·`get_report_sections`(아래 원격 도구 사용 순서 참조)도 로컬에서 그대로 사용할 수 있습니다. 로컬 서버는 전체 기능을 제공하며 API 키가 컴퓨터 밖으로 나가지 않고, 원격 서버는 설치 없이 핵심 조회만 제공합니다.
+파일 없이 데이터만 보려면 원격 서버와 동일한 `list_report_sections`·`get_report_sections`·`get_financial_statements`·`get_major_accounts`·`get_financial_indicators`(아래 원격 도구 사용 순서 참조)도 로컬에서 그대로 사용할 수 있습니다. 로컬 서버는 전체 기능을 제공하며 API 키가 컴퓨터 밖으로 나가지 않고, 원격 서버는 설치 없이 모든 조회 도구를 제공합니다(파일 반출은 로컬 전용).
 
 모든 도구는 `ok`, 성공 시 `data`, 실패 시 `error { code, message, retryable, details }`, `warnings`, `next_action` 구조를 사용합니다. API 키나 비밀번호는 오류 내용에 넣지 않습니다.
 
@@ -76,7 +76,7 @@ uv run dart-crawler-mcp
   - 기본: `X-OpenDART-API-Key: 발급받은_키` 헤더
   - 대체: `Authorization: Bearer 발급받은_키` 헤더
   - 헤더를 못 쓰는 클라이언트용: URL 뒤에 `?key=발급받은_키`
-- 도구: `search_companies`, `list_report_filings`, `list_report_attachments`, `list_report_sections`, `get_report_sections` 5개 (조회 전용)
+- 도구: `search_companies`, `list_report_filings`, `list_report_attachments`, `list_report_sections`, `get_report_sections`, `get_financial_statements`, `get_major_accounts`, `get_financial_indicators` 8개 (조회 전용)
 - Excel 파일 생성(`export_report_excel`)은 원격 서버가 파일을 저장할 위치가 없어 제공하지 않습니다. 로컬 서버에서만 가능합니다.
 
 ### Claude for Excel에서 사용하기
@@ -113,6 +113,10 @@ claude mcp add --transport http --scope user dart_remote https://dart-mcp-remote
 1. `search_companies`, `list_report_filings`, `list_report_attachments`는 로컬과 동일하게 사용합니다.
 2. `list_report_sections(rcept_no, attachment_id)`로 첨부문서의 목차를 확인합니다. 섹션마다 `section_id`, 제목, 종류(`kind`), 표 셀 수, 이미지 포함 여부가 표시되고 내용은 포함되지 않습니다. 이미지 전용 구역은 OCR하지 않으므로 내용이 비어 있을 수 있습니다.
 3. `get_report_sections(rcept_no, attachment_id, section_ids, section_kinds)`로 선택한 섹션의 내용을 받습니다. `section_ids`(목차의 id), `section_kinds`(예: `balance_sheet`, `note`) 중 하나 이상을 지정하며, `section_kinds`에 `statements`를 주면 재무상태표·손익(포괄손익)계산서·자본변동표·현금흐름표 네 가지 종류의 재무제표 구역을 한 번에 받습니다. 한 번에 받을 수 있는 분량에는 한도가 있으며, 넘으면 일부만 주는 대신 요청을 나누라는 안내와 함께 거부합니다.
+4. 원문 첨부문서를 거치지 않고 DART 공식 재무 API에서 바로 조회하려면 아래 세 도구를 사용합니다. `corp_code`는 `search_companies`로 확인한 8자리 DART 고유번호이며 종목코드가 아닙니다. `reprt_code`는 `11011`(사업보고서/연간), `11012`(반기), `11013`(1분기), `11014`(3분기)이고, 2015 사업연도부터 조회됩니다. 금액은 모두 DART 원문 그대로의 문자열(쉼표 포함 가능)이며 서버가 숫자로 변환하지 않습니다.
+   - `get_financial_statements(corp_code, bsns_year, reprt_code, fs_div="CFS")`: 한 회사의 한 보고서 기간에 대한 전체 공식 계정과목을 받습니다. `fs_div`는 기본값 `CFS`(연결) 또는 `OFS`(별도)이며, 연결재무제표가 없는 회사는 `fs_div="OFS"`로 다시 시도하라는 안내와 함께 거부됩니다.
+   - `get_major_accounts(corp_codes, bsns_year, reprt_code)`: 최대 10개 회사의 주요 재무상태표·손익계산서 계정을 한 번에 받아 회사 간 비교에 사용합니다. 계정 상세는 `get_financial_statements`를 사용하세요.
+   - `get_financial_indicators(corp_codes, bsns_year, reprt_code, idx_cl_code)`: 최대 10개 회사의 재무지표 한 분류를 받습니다. `idx_cl_code`는 `M210000`(수익성), `M220000`(안정성), `M230000`(성장성), `M240000`(활동성) 중 하나입니다.
 
 ## 출력 파일
 

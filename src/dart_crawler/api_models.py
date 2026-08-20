@@ -26,14 +26,17 @@ class DartListRow(BaseModel):
         return value or None
 
 
-class DartListResponse(BaseModel):
-    """OpenDART disclosure search response."""
+class DartRowsResponse[RowT](BaseModel):
+    """Generic OpenDART envelope for endpoints that return rows under `list`."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     status: str
     message: str
-    list: tuple[DartListRow, ...] = ()
+    list: tuple[RowT, ...] = ()
+
+
+DartListResponse = DartRowsResponse[DartListRow]
 
 
 class FinancialAccount(BaseModel):
@@ -53,13 +56,62 @@ class FinancialAccount(BaseModel):
     frmtrm_q_amount: str = ""
     frmtrm_add_amount: str = ""
     currency: str = ""
+    rcept_no: str = ""
+    corp_code: str = ""
+    sj_nm: str = ""
+    fs_nm: str = ""
+    account_detail: str = ""
+    thstrm_nm: str = ""
+    frmtrm_nm: str = ""
+    frmtrm_q_nm: str = ""
+    bfefrmtrm_nm: str = ""
+    bfefrmtrm_amount: str = ""
+    ord: str = ""
 
 
-class FinancialAccountResponse(BaseModel):
-    """OpenDART full-account response."""
+FinancialAccountResponse = DartRowsResponse[FinancialAccount]
+
+
+class MajorAccountRow(BaseModel):
+    """One row from the OpenDART major-account financial API (DS003)."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    status: str
-    message: str
-    list: tuple[FinancialAccount, ...] = ()
+    rcept_no: str = ""
+    reprt_code: str
+    bsns_year: str
+    corp_code: str = ""
+    stock_code: str = ""
+    fs_div: str
+    fs_nm: str = ""
+    sj_div: str
+    sj_nm: str = ""
+    account_nm: str
+    thstrm_nm: str = ""
+    thstrm_dt: str = ""
+    thstrm_amount: str = ""
+    thstrm_add_amount: str = ""
+    frmtrm_nm: str = ""
+    frmtrm_dt: str = ""
+    frmtrm_amount: str = ""
+    frmtrm_add_amount: str = ""
+    bfefrmtrm_nm: str = ""
+    bfefrmtrm_dt: str = ""
+    bfefrmtrm_amount: str = ""
+    ord: str = ""
+    currency: str = ""
+
+
+class FinancialIndexRow(BaseModel):
+    """One row from the OpenDART financial-index API (DS003)."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    bsns_year: str
+    corp_code: str = ""
+    stock_code: str = ""
+    stlm_dt: str = ""
+    idx_cl_code: str = ""
+    idx_cl_nm: str = ""
+    idx_nm: str = ""
+    idx_val: str = ""
