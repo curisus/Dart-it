@@ -13,3 +13,13 @@ tests
 docs
 scripts
 .github
+
+# Local artifacts the CLI would otherwise upload (it ignores .gitignore)
+dist
+build
+data
+output
+*.mp4
+*.xlsx
+*.zip
+*.pdf
