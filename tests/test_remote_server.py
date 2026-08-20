@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from typing import Any
 
 import anyio
 import httpx2
@@ -208,7 +209,13 @@ async def test_local_server_keeps_exactly_its_four_tools() -> None:
     assert "list_report_sections" not in names
 
 
-async def _post_jsonrpc(method: str, params: JsonObject) -> JsonObject:
+async def _post_jsonrpc(
+    method: str,
+    params: JsonObject,
+    *,
+    path: str = _MCP_PATH,
+    headers: Mapping[str, str] | None = None,
+) -> JsonObject:
     """Call the built ASGI app in process, without an initialize handshake."""
     app = build_app()
     request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
@@ -220,9 +227,9 @@ async def _post_jsonrpc(method: str, params: JsonObject) -> JsonObject:
         ) as client,
     ):
         response = await client.post(
-            _MCP_PATH,
+            path,
             json=request,
-            headers={"Accept": _MCP_ACCEPT},
+            headers={"Accept": _MCP_ACCEPT, **(headers or {})},
         )
     assert response.status_code == 200
     # json_response=True means one JSON body, not an event stream.
@@ -323,6 +330,89 @@ async def test_tools_call_without_key_header_returns_config_error_envelope() -> 
     assert envelope["error"]["code"] == "CONFIG_ERROR"
     assert envelope["error"]["retryable"] is False
     assert "X-OpenDART-API-Key" in envelope["next_action"]
+
+
+def _install_key_recording_service(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Swap the service the remote tools build for one that records its key."""
+    captured: list[str] = []
+
+    class _RecordingService:
+        def __init__(self, api_key: SecretStr, http_client: object) -> None:
+            captured.append(api_key.get_secret_value())
+
+        def list_report_attachments(
+            self,
+            rcept_no: str,
+        ) -> Result[tuple[Attachment, ...]]:
+            assert rcept_no == _RCEPT_NO
+            return Result.success((_listed_attachment(),))
+
+    monkeypatch.setattr("dart_crawler.remote_server.CrawlerService", _RecordingService)
+    return captured
+
+
+async def _call_attachments_tool(
+    *,
+    path: str = _MCP_PATH,
+    headers: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    called = CallToolResult.model_validate(
+        await _post_jsonrpc(
+            "tools/call",
+            {
+                "name": "list_report_attachments",
+                "arguments": {"rcept_no": _RCEPT_NO},
+            },
+            path=path,
+            headers=headers,
+        )
+    )
+    envelope: dict[str, Any] | None = called.structured_content
+    assert envelope is not None
+    return envelope
+
+
+@pytest.mark.anyio
+async def test_query_key_lets_a_headerless_client_call_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """claude.ai connectors without the header beta send the key in the URL."""
+    captured = _install_key_recording_service(monkeypatch)
+
+    envelope = await _call_attachments_tool(path=f"{_MCP_PATH}?key=query-key")
+
+    assert envelope["ok"] is True
+    assert captured == ["query-key"]
+
+
+@pytest.mark.anyio
+async def test_header_key_wins_over_the_query_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _install_key_recording_service(monkeypatch)
+
+    envelope = await _call_attachments_tool(
+        path=f"{_MCP_PATH}?key=query-key",
+        headers={"X-OpenDART-API-Key": "direct-key"},
+    )
+
+    assert envelope["ok"] is True
+    assert captured == ["direct-key"]
+
+
+@pytest.mark.anyio
+async def test_blank_query_key_still_fails_with_config_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The recording service keeps a regression here from reaching the real
+    # DART servers: a blank key that slipped through would call the network.
+    _install_key_recording_service(monkeypatch)
+
+    envelope = await _call_attachments_tool(path=f"{_MCP_PATH}?key=%20%20")
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "CONFIG_ERROR"
+    assert "?key=" in envelope["next_action"]
 
 
 def test_list_report_sections_summarizes_every_section(
