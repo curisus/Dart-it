@@ -18,6 +18,12 @@ from dart_crawler.document_model import ParsedDocument
 from dart_crawler.document_parser import parse_attachment
 from dart_crawler.document_validation import validate_document
 from dart_crawler.domain import Attachment, Company, Filing, ReportKind
+from dart_crawler.domains.financials import (
+    FinancialIndicatorData,
+    FinancialsService,
+    FinancialStatementData,
+    MajorAccountData,
+)
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
 from dart_crawler.filing_service import FilingService
 from dart_crawler.http_client import HttpClient
@@ -72,6 +78,41 @@ class CrawlerService:
     ) -> Result[tuple[Company, ...]]:
         """Search companies that have the requested report family."""
         return CompanySearchService(self._api).search(company_query, report_kind)
+
+    def get_financial_statements(
+        self,
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+        fs_div: str,
+    ) -> Result[FinancialStatementData]:
+        """Return every official account row for one company and filing period."""
+        return FinancialsService(self._api).full_statements(
+            corp_code, bsns_year, reprt_code, fs_div
+        )
+
+    def get_major_accounts(
+        self,
+        corp_codes: tuple[str, ...],
+        bsns_year: int,
+        reprt_code: str,
+    ) -> Result[MajorAccountData]:
+        """Return DS003 major-account rows for up to ten companies."""
+        return FinancialsService(self._api).major_accounts(
+            corp_codes, bsns_year, reprt_code
+        )
+
+    def get_financial_indicators(
+        self,
+        corp_codes: tuple[str, ...],
+        bsns_year: int,
+        reprt_code: str,
+        idx_cl_code: str,
+    ) -> Result[FinancialIndicatorData]:
+        """Return one DS003 financial-indicator family for up to ten companies."""
+        return FinancialsService(self._api).indicators(
+            corp_codes, bsns_year, reprt_code, idx_cl_code
+        )
 
     def list_report_filings(
         self,

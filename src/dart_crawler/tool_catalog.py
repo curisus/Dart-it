@@ -20,6 +20,11 @@ from mcp.server.mcpserver import Context
 
 from dart_crawler.crawler_service import CrawlerService
 from dart_crawler.domain import Attachment, Company, Filing
+from dart_crawler.domains.financials import (
+    FinancialIndicatorData,
+    FinancialStatementData,
+    MajorAccountData,
+)
 from dart_crawler.excel_export import ExportedFile
 from dart_crawler.result import Result
 from dart_crawler.section_models import ReportSectionData, ReportSectionList
@@ -45,7 +50,7 @@ class ServiceRunner(Protocol):
 
 
 def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
-    """Register the five read-only query tools shared by every surface."""
+    """Register the eight read-only query tools shared by every surface."""
 
     @mcp.tool()
     def search_companies(
@@ -123,6 +128,88 @@ def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
                 attachment_id,
                 section_ids,
                 section_kinds,
+            ),
+        )
+
+    @mcp.tool()
+    def get_financial_statements(
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+        ctx: Context,
+        fs_div: str = "CFS",
+    ) -> Result[FinancialStatementData]:
+        """Return every official account row of one company for one filing period.
+
+        corp_code comes from search_companies (an 8-digit DART code, never a
+        stock ticker). reprt_code selects the filing: 11011 annual, 11012
+        half-year, 11013 Q1, 11014 Q3. Data covers fiscal year 2015 onward.
+        fs_div selects CFS (consolidated, default) or OFS (separate); a
+        company with no consolidated statements returns NOT_FOUND whose
+        next_action suggests retrying with fs_div="OFS". Amounts are returned
+        verbatim as KRW strings (commas possible) and are never converted.
+        """
+        return run(
+            ctx,
+            lambda service: service.get_financial_statements(
+                corp_code,
+                bsns_year,
+                reprt_code,
+                fs_div,
+            ),
+        )
+
+    @mcp.tool()
+    def get_major_accounts(
+        corp_codes: tuple[str, ...],
+        bsns_year: int,
+        reprt_code: str,
+        ctx: Context,
+    ) -> Result[MajorAccountData]:
+        """Return key balance-sheet and income-statement accounts for up to ten companies.
+
+        corp_codes come from search_companies (8-digit DART codes, never
+        stock tickers). reprt_code selects the filing: 11011 annual, 11012
+        half-year, 11013 Q1, 11014 Q3. Data covers fiscal year 2015 onward.
+        Intended for cross-company comparison in one call; full account
+        detail for a single company belongs to get_financial_statements.
+        Amounts are returned verbatim as KRW strings (commas possible) and
+        are never converted.
+        """
+        return run(
+            ctx,
+            lambda service: service.get_major_accounts(
+                corp_codes,
+                bsns_year,
+                reprt_code,
+            ),
+        )
+
+    @mcp.tool()
+    def get_financial_indicators(
+        corp_codes: tuple[str, ...],
+        bsns_year: int,
+        reprt_code: str,
+        idx_cl_code: str,
+        ctx: Context,
+    ) -> Result[FinancialIndicatorData]:
+        """Return one financial-indicator family for up to ten companies.
+
+        corp_codes come from search_companies (8-digit DART codes, never
+        stock tickers). reprt_code selects the filing: 11011 annual, 11012
+        half-year, 11013 Q1, 11014 Q3. Data covers fiscal year 2015 onward.
+        idx_cl_code selects the indicator family: M210000 profitability,
+        M220000 stability, M230000 growth, M240000 activity. Amounts are
+        returned verbatim as KRW strings (commas possible) and are never
+        converted.
+        """
+        return run(
+            ctx,
+            lambda service: service.get_financial_indicators(
+                corp_codes,
+                bsns_year,
+                reprt_code,
+                idx_cl_code,
             ),
         )
 

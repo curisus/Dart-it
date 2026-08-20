@@ -27,6 +27,9 @@ async def test_mcp_registers_the_local_superset_and_returns_result_envelope(
         "list_report_attachments",
         "list_report_sections",
         "get_report_sections",
+        "get_financial_statements",
+        "get_major_accounts",
+        "get_financial_indicators",
         "export_report_excel",
     }
 

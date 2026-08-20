@@ -556,6 +556,24 @@ def _non_table_block_count(document: ParsedDocument) -> int:
     )
 
 
+def _balance_sheet_amounts(rows: list[object]) -> dict[str, str]:
+    """Extract 재무상태표(BS) account amounts, keeping each account's first row.
+
+    Shared by the direct-API fetch and the get_financial_statements tool
+    response so the two are reduced identically before being compared.
+    """
+    amounts: dict[str, str] = {}
+    for row in rows:
+        account = _as_object(row, "account")
+        if account.get("sj_div") != _BALANCE_SHEET_DIVISION:
+            continue
+        name = compact(_as_text(account.get("account_nm"), "account_nm"))
+        amount = account.get("thstrm_amount")
+        if isinstance(amount, str) and amount.strip():
+            amounts.setdefault(name, amount)
+    return amounts
+
+
 def _official_balance_sheet(
     api_key: str,
     corp_code: str,
@@ -577,16 +595,7 @@ def _official_balance_sheet(
     status = payload.get("status")
     if status != "000":
         _abort(f"fnlttSinglAcntAll status={status!r} message={payload.get('message')!r}")
-    amounts: dict[str, str] = {}
-    for row in _as_array(payload.get("list"), "list"):
-        account = _as_object(row, "account")
-        if account.get("sj_div") != _BALANCE_SHEET_DIVISION:
-            continue
-        name = compact(_as_text(account.get("account_nm"), "account_nm"))
-        amount = account.get("thstrm_amount")
-        if isinstance(amount, str) and amount.strip():
-            amounts.setdefault(name, amount)
-    return amounts
+    return _balance_sheet_amounts(_as_array(payload.get("list"), "list"))
 
 
 def _balance_sheet_rows(sections: list[dict[str, object]]) -> list[tuple[str, ...]]:
@@ -658,7 +667,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     recorder.facts["tool_names"] = list(tool_names)
     recorder.record(
         "tools/list surface",
-        passed=len(tool_names) == 5 and "export_report_excel" not in tool_names,
+        passed=len(tool_names) == 8 and "export_report_excel" not in tool_names,
         detail=f"{len(tool_names)}개: {', '.join(tool_names)}",
     )
 
@@ -792,6 +801,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     remote_sections, returned_total = _collect_all_sections(client, recorder, summaries, rcept_no, attachment_id)
     _run_cross_check(recorder, api_key, rcept_no, attachment_id, remote_sections, returned_total)
     _run_official_check(recorder, api_key, corp_code, business_year, statement_sections)
+    _run_financial_data_tools_check(client, recorder, api_key, corp_code, business_year)
 
 
 def _run_negative_cases(
@@ -953,6 +963,90 @@ def _run_official_check(
             for match in matches
         )
         or "재무상태표 계정을 하나도 대조하지 못했습니다.",
+    )
+
+
+def _run_financial_data_tools_check(
+    client: RemoteClient,
+    recorder: Recorder,
+    api_key: str,
+    corp_code: str,
+    business_year: int,
+) -> None:
+    """Cross-check get_financial_statements and smoke-test get_financial_indicators.
+
+    get_financial_statements and the direct fnlttSinglAcntAll call hit the
+    same OpenDART endpoint, so their balance-sheet amounts must match
+    exactly rather than merely after unit scaling.
+    """
+    official = _official_balance_sheet(api_key, corp_code, business_year)
+    statements = _as_object(
+        _data(
+            client.call(
+                "get_financial_statements",
+                {
+                    "corp_code": corp_code,
+                    "bsns_year": business_year,
+                    "reprt_code": _ANNUAL_REPORT_CODE,
+                    "fs_div": _SEPARATE_SCOPE,
+                },
+                label="get_financial_statements",
+            ),
+            "get_financial_statements",
+        ),
+        "FinancialStatementData",
+    )
+    tool_amounts = _balance_sheet_amounts(_as_array(statements.get("accounts"), "accounts"))
+    comparisons = [
+        (account, tool_amounts.get(account), official[account])
+        for account in _OFFICIAL_ACCOUNT_NAMES
+        if account in official
+    ]
+    mismatches = [
+        f"{account} 도구={tool_amount!r} 직접호출={official_amount!r}"
+        for account, tool_amount, official_amount in comparisons
+        if tool_amount != official_amount
+    ]
+    recorder.facts["get_financial_statements"] = {
+        "returned_row_count": statements.get("returned_row_count"),
+        "compared_accounts": [account for account, _tool, _official in comparisons],
+        "mismatches": mismatches,
+    }
+    recorder.record(
+        "get_financial_statements == fnlttSinglAcntAll 직접호출 (자산총계/부채총계/자본총계)",
+        passed=bool(comparisons) and not mismatches,
+        detail="; ".join(f"{account}={amount}" for account, amount, _official in comparisons)
+        or "비교할 재무상태표 계정을 찾지 못했습니다.",
+    )
+
+    indicators = _as_object(
+        _data(
+            client.call(
+                "get_financial_indicators",
+                {
+                    "corp_codes": [corp_code],
+                    "bsns_year": business_year,
+                    "reprt_code": _ANNUAL_REPORT_CODE,
+                    "idx_cl_code": "M210000",
+                },
+                label="get_financial_indicators",
+            ),
+            "get_financial_indicators",
+        ),
+        "FinancialIndicatorData",
+    )
+    indicator_rows = _as_array(indicators.get("indicators"), "indicators")
+    recorder.facts["get_financial_indicators"] = {
+        "returned_row_count": indicators.get("returned_row_count"),
+        "row_count_observed": len(indicator_rows),
+    }
+    # Row presence legitimately varies by company/year, so only the envelope
+    # parsing is asserted here (an ok=False response would already have
+    # aborted inside _data above); the row count is recorded, not required.
+    recorder.record(
+        "get_financial_indicators 응답 봉투 파싱",
+        passed=True,
+        detail=f"idx_cl_code=M210000 행 {len(indicator_rows)}개",
     )
 
 

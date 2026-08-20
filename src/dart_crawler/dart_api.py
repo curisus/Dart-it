@@ -16,8 +16,11 @@ from pydantic import ValidationError
 from dart_crawler.api_models import (
     DartListResponse,
     DartListRow,
+    DartRowsResponse,
     FinancialAccount,
     FinancialAccountResponse,
+    FinancialIndexRow,
+    MajorAccountRow,
 )
 from dart_crawler.http_client import HttpClient, HttpResponse
 from dart_crawler.result import ErrorCode, ErrorInfo, Result, error_info
@@ -27,6 +30,10 @@ _LIST_URL = f"{_OPEN_DART_BASE}/list.json"
 _CORP_CODE_URL = f"{_OPEN_DART_BASE}/corpCode.xml"
 _DOCUMENT_URL = f"{_OPEN_DART_BASE}/document.xml"
 _FINANCIAL_ACCOUNT_URL = f"{_OPEN_DART_BASE}/fnlttSinglAcntAll.json"
+_MAJOR_ACCOUNT_SINGLE_URL = f"{_OPEN_DART_BASE}/fnlttSinglAcnt.json"
+_MAJOR_ACCOUNT_MULTI_URL = f"{_OPEN_DART_BASE}/fnlttMultiAcnt.json"
+_FINANCIAL_INDEX_SINGLE_URL = f"{_OPEN_DART_BASE}/fnlttSinglIndx.json"
+_FINANCIAL_INDEX_MULTI_URL = f"{_OPEN_DART_BASE}/fnlttCmpnyIndx.json"
 _VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do"
 _VIEWER_DOCUMENT_URL = "https://dart.fss.or.kr/report/viewer.do"
 
@@ -86,7 +93,7 @@ class DartApi:
         report_detail_type: str,
     ) -> Result[tuple[DartListRow, ...]]:
         """Return disclosure rows for one company and one regular-report type."""
-        response = self._get_json(
+        return self._fetch_rows(
             _LIST_URL,
             {
                 "corp_code": corp_code,
@@ -99,33 +106,12 @@ class DartApi:
                 "page_no": "1",
                 "page_count": "100",
             },
+            DartListResponse,
+            unavailable_message="OpenDART 공시 검색에 실패했습니다.",
+            parse_failure_message="OpenDART 공시 응답 형식을 해석할 수 없습니다.",
+            unavailable_next_action="잠시 후 공시 검색을 다시 시도하세요.",
+            parse_failure_next_action="OpenDART 응답 형식 변경 여부를 확인하세요.",
         )
-        if not response.ok or response.data is None:
-            return Result.failure(
-                response.error
-                if response.error is not None
-                else error_info(
-                    ErrorCode.UPSTREAM_UNAVAILABLE,
-                    "OpenDART 공시 검색에 실패했습니다.",
-                    retryable=True,
-                ),
-                warnings=response.warnings,
-                next_action="잠시 후 공시 검색을 다시 시도하세요.",
-            )
-        try:
-            parsed = DartListResponse.model_validate_json(response.data.content)
-        except ValidationError:
-            return Result.failure(
-                error_info(
-                    ErrorCode.PARSE_FAILED,
-                    "OpenDART 공시 응답 형식을 해석할 수 없습니다.",
-                    retryable=False,
-                ),
-                next_action="OpenDART 응답 형식 변경 여부를 확인하세요.",
-            )
-        if parsed.status != "000":
-            return Result.failure(_dart_status_error(parsed.status))
-        return Result.success(parsed.list)
 
     def find_disclosure(self, rcept_no: str) -> Result[DartListRow]:
         """Find one disclosure by its receipt number in the receipt-day window."""
@@ -255,7 +241,7 @@ class DartApi:
         query: FinancialQuery,
     ) -> Result[tuple[FinancialAccount, ...]]:
         """Fetch OFS or CFS rows for one report period."""
-        response = self._get_json(
+        return self._fetch_rows(
             _FINANCIAL_ACCOUNT_URL,
             {
                 "corp_code": query.corp_code,
@@ -263,26 +249,88 @@ class DartApi:
                 "reprt_code": query.report_code,
                 "fs_div": query.statement_scope,
             },
+            FinancialAccountResponse,
+            unavailable_message="OpenDART 전체 계정과목을 수집할 수 없습니다.",
+            parse_failure_message="OpenDART 전체 계정과목 응답 형식을 해석할 수 없습니다.",
         )
+
+    def fetch_major_accounts(
+        self,
+        corp_codes: tuple[str, ...],
+        business_year: int,
+        report_code: str,
+    ) -> Result[tuple[MajorAccountRow, ...]]:
+        """Fetch DS003 major-account rows for one or more companies."""
+        single = len(corp_codes) == 1
+        return self._fetch_rows(
+            _MAJOR_ACCOUNT_SINGLE_URL if single else _MAJOR_ACCOUNT_MULTI_URL,
+            {
+                "corp_code": corp_codes[0] if single else ",".join(corp_codes),
+                "bsns_year": str(business_year),
+                "reprt_code": report_code,
+            },
+            DartRowsResponse[MajorAccountRow],
+            unavailable_message="OpenDART 주요계정 재무정보를 수집할 수 없습니다.",
+            parse_failure_message="OpenDART 주요계정 재무정보 응답 형식을 해석할 수 없습니다.",
+        )
+
+    def fetch_financial_indexes(
+        self,
+        corp_codes: tuple[str, ...],
+        business_year: int,
+        report_code: str,
+        index_class: str,
+    ) -> Result[tuple[FinancialIndexRow, ...]]:
+        """Fetch DS003 financial-index rows for one or more companies."""
+        single = len(corp_codes) == 1
+        return self._fetch_rows(
+            _FINANCIAL_INDEX_SINGLE_URL if single else _FINANCIAL_INDEX_MULTI_URL,
+            {
+                "corp_code": corp_codes[0] if single else ",".join(corp_codes),
+                "bsns_year": str(business_year),
+                "reprt_code": report_code,
+                "idx_cl_code": index_class,
+            },
+            DartRowsResponse[FinancialIndexRow],
+            unavailable_message="OpenDART 재무지표를 수집할 수 없습니다.",
+            parse_failure_message="OpenDART 재무지표 응답 형식을 해석할 수 없습니다.",
+        )
+
+    def _fetch_rows[RowT](
+        self,
+        url: str,
+        params: Mapping[str, str],
+        response_model: type[DartRowsResponse[RowT]],
+        *,
+        unavailable_message: str,
+        parse_failure_message: str,
+        unavailable_next_action: str | None = None,
+        parse_failure_next_action: str | None = None,
+    ) -> Result[tuple[RowT, ...]]:
+        """GET one OpenDART rows endpoint and parse its `list` field."""
+        response = self._get_json(url, params)
         if not response.ok or response.data is None:
             return Result.failure(
                 response.error
                 if response.error is not None
                 else error_info(
                     ErrorCode.UPSTREAM_UNAVAILABLE,
-                    "OpenDART 전체 계정과목을 수집할 수 없습니다.",
+                    unavailable_message,
                     retryable=True,
-                )
+                ),
+                warnings=response.warnings,
+                next_action=unavailable_next_action,
             )
         try:
-            parsed = FinancialAccountResponse.model_validate_json(response.data.content)
+            parsed = response_model.model_validate_json(response.data.content)
         except ValidationError:
             return Result.failure(
                 error_info(
                     ErrorCode.PARSE_FAILED,
-                    "OpenDART 전체 계정과목 응답 형식을 해석할 수 없습니다.",
+                    parse_failure_message,
                     retryable=False,
-                )
+                ),
+                next_action=parse_failure_next_action,
             )
         if parsed.status != "000":
             return Result.failure(_dart_status_error(parsed.status))

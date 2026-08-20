@@ -300,6 +300,190 @@ def test_document_download_detects_status_xml_by_shape(status_body: bytes) -> No
     assert result.error.details["dart_status"] == "014"
 
 
+def test_fetch_major_accounts_single_corp_hits_single_endpoint() -> None:
+    body = (
+        '{"status":"000","message":"OK","list":[{"rcept_no":"20260310002820",'
+        '"reprt_code":"11011","bsns_year":"2025","corp_code":"00126380",'
+        '"stock_code":"005930","fs_div":"CFS","fs_nm":"연결재무제표",'
+        '"sj_div":"BS","sj_nm":"재무상태표","account_nm":"자산총계",'
+        '"thstrm_amount":"1000","ord":"1","currency":"KRW"}]}'
+    ).encode()
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_major_accounts(("00126380",), 2025, "11011")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert len(result.data) == 1
+    row = result.data[0]
+    assert row.account_nm == "자산총계"
+    assert row.thstrm_amount == "1000"
+    assert row.ord == "1"
+    assert client.requests[0][0].endswith("fnlttSinglAcnt.json")
+    assert client.requests[0][1]["corp_code"] == "00126380"
+    assert client.requests[0][1]["bsns_year"] == "2025"
+    assert client.requests[0][1]["reprt_code"] == "11011"
+
+
+def test_fetch_major_accounts_multi_corp_hits_multi_endpoint_with_joined_codes() -> (
+    None
+):
+    body = b'{"status":"000","message":"OK","list":[]}'
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_major_accounts(
+        ("00126380", "00164742", "00164779"), 2025, "11011"
+    )
+
+    assert result.ok is True
+    assert client.requests[0][0].endswith("fnlttMultiAcnt.json")
+    assert client.requests[0][1]["corp_code"] == "00126380,00164742,00164779"
+
+
+def test_fetch_financial_indexes_single_corp_passes_idx_cl_code() -> None:
+    body = (
+        '{"status":"000","message":"OK","list":[{"bsns_year":"2025",'
+        '"corp_code":"00126380","stock_code":"005930","stlm_dt":"2025-12-31",'
+        '"idx_cl_code":"M210000","idx_cl_nm":"수익성지표",'
+        '"idx_nm":"매출총이익율","idx_val":"12.3"}]}'
+    ).encode()
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_financial_indexes(("00126380",), 2025, "11011", "M210000")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert len(result.data) == 1
+    assert result.data[0].idx_val == "12.3"
+    assert client.requests[0][0].endswith("fnlttSinglIndx.json")
+    assert client.requests[0][1]["idx_cl_code"] == "M210000"
+
+
+def test_fetch_financial_indexes_multi_corp_hits_multi_endpoint() -> None:
+    body = b'{"status":"000","message":"OK","list":[]}'
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_financial_indexes(
+        ("00126380", "00164742"), 2025, "11011", "M210000"
+    )
+
+    assert result.ok is True
+    assert client.requests[0][0].endswith("fnlttCmpnyIndx.json")
+    assert client.requests[0][1]["corp_code"] == "00126380,00164742"
+
+
+def test_fetch_financial_indexes_row_defaults_missing_idx_val() -> None:
+    body = (
+        '{"status":"000","message":"OK","list":[{"bsns_year":"2025",'
+        '"corp_code":"00126380","stock_code":"005930","stlm_dt":"2025-12-31",'
+        '"idx_cl_code":"M210000","idx_cl_nm":"수익성지표",'
+        '"idx_nm":"매출총이익율"}]}'
+    ).encode()
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_financial_indexes(("00126380",), 2025, "11011", "M210000")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data[0].idx_val == ""
+
+
+def test_fetch_major_accounts_ignores_unknown_extra_fields() -> None:
+    body = (
+        '{"status":"000","message":"OK","list":[{"rcept_no":"20260310002820",'
+        '"reprt_code":"11011","bsns_year":"2025","corp_code":"00126380",'
+        '"fs_div":"CFS","sj_div":"BS","account_nm":"자산총계",'
+        '"totally_unknown_field":"should be ignored"}]}'
+    ).encode()
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_major_accounts(("00126380",), 2025, "11011")
+
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data[0].account_nm == "자산총계"
+
+
+def test_fetch_major_accounts_not_found_status_maps_to_not_found() -> None:
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"013","message":"no data"}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_major_accounts(("00126380",), 2025, "11011")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+
+
+def test_fetch_major_accounts_auth_failure_status_maps_to_upstream_auth() -> None:
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"010","message":"bad key"}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_major_accounts(("00126380",), 2025, "11011")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.UPSTREAM_AUTH
+
+
+def test_fetch_financial_indexes_not_found_status_maps_to_not_found() -> None:
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"013","message":"no data"}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_financial_indexes(("00126380",), 2025, "11011", "M210000")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+
+
+def test_fetch_financial_indexes_auth_failure_status_maps_to_upstream_auth() -> None:
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"010","message":"bad key"}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_financial_indexes(("00126380",), 2025, "11011", "M210000")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.UPSTREAM_AUTH
+
+
+def test_fetch_major_accounts_malformed_json_maps_to_parse_failed() -> None:
+    client = FakeHttpClient([HttpResponse(200, {}, b"not json at all")])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_major_accounts(("00126380",), 2025, "11011")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.PARSE_FAILED
+
+
+def test_fetch_financial_indexes_malformed_json_maps_to_parse_failed() -> None:
+    client = FakeHttpClient([HttpResponse(200, {}, b"not json at all")])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_financial_indexes(("00126380",), 2025, "11011", "M210000")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.PARSE_FAILED
+
+
 def test_document_download_returns_pk_payload_untouched() -> None:
     archive_body = b"PK\x03\x04<result><status>014</status></result>"
     api = DartApi(
