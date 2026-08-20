@@ -28,6 +28,7 @@ from dart_crawler.domains.financials import (
 )
 from dart_crawler.domains.material_events import MaterialEventData
 from dart_crawler.domains.ownership import OwnershipReportData
+from dart_crawler.domains.registration_statements import RegistrationStatementData
 from dart_crawler.domains.report_topics import ReportTopicData
 from dart_crawler.excel_export import ExportedFile
 from dart_crawler.markdown_export import MarkdownExportedFile
@@ -55,7 +56,7 @@ class ServiceRunner(Protocol):
 
 
 def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
-    """Register the twelve read-only query tools shared by every surface.
+    """Register the thirteen read-only query tools shared by every surface.
 
     Split into three grouped helpers purely to stay under the mccabe
     complexity limit (each nested ``@mcp.tool()`` definition counts as one
@@ -65,6 +66,7 @@ def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
     _register_document_tools(mcp, run)
     _register_financial_tools(mcp, run)
     _register_disclosure_tools(mcp, run)
+    _register_registration_statement_tools(mcp, run)
 
 
 def _register_document_tools(mcp: MCPServer, run: ServiceRunner) -> None:
@@ -377,6 +379,41 @@ def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
             ctx,
             lambda service: service.get_material_events(
                 corp_code, event_types, bgn_de, end_de
+            ),
+        )
+
+
+def _register_registration_statement_tools(
+    mcp: MCPServer,
+    run: ServiceRunner,
+) -> None:
+    @mcp.tool()
+    def get_registration_statements(
+        corp_code: str,
+        stmt_type: str,
+        bgn_de: str,
+        end_de: str,
+        ctx: Context,
+    ) -> Result[RegistrationStatementData]:
+        """Return OpenDART DS006 registration-statement rows for one statement type.
+
+        corp_code comes from search_companies (an 8-digit DART code, never a
+        stock ticker). bgn_de/end_de (both YYYYMMDD) are REQUIRED and select
+        the receipt-date range, inclusive on both ends. stmt_type selects one
+        DS006 statement family: equity_securities, debt_securities,
+        depositary_receipts, merger, stock_exchange_transfer, division. Rows are
+        returned verbatim with every source field, grouped under OpenDART's
+        official group titles. A period with no rows still succeeds with zero
+        rows and a partial-collection warning; an unknown stmt_type fails with
+        the supported list in its error details.
+        """
+        return run(
+            ctx,
+            lambda service: service.get_registration_statements(
+                corp_code,
+                stmt_type,
+                bgn_de,
+                end_de,
             ),
         )
 

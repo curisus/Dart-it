@@ -7,8 +7,9 @@ from mcp_types import CallToolResult
 from dart_crawler import mcp_server
 from dart_crawler.crawler_service import CrawlerService
 from dart_crawler.domain import Company, Market, MatchConfidence
+from dart_crawler.domains.registration_statements import RegistrationStatementData
 from dart_crawler.mcp_server import mcp
-from dart_crawler.result import Result
+from dart_crawler.result import ErrorCode, Result, error_info
 
 
 @pytest.mark.anyio
@@ -21,7 +22,7 @@ async def test_mcp_registers_the_local_superset_and_returns_result_envelope(
 
     listed = await mcp.list_tools()
     names = {tool.name for tool in listed}
-    assert names == {
+    query_tools = {
         "search_companies",
         "list_report_filings",
         "list_report_attachments",
@@ -34,9 +35,14 @@ async def test_mcp_registers_the_local_superset_and_returns_result_envelope(
         "get_company_profile",
         "get_ownership_reports",
         "get_material_events",
+        "get_registration_statements",
+    }
+    assert names == query_tools | {
         "export_report_excel",
         "export_report_markdown",
     }
+    assert len(query_tools) == 13
+    assert len(names) == 15
 
     result = await mcp.call_tool(
         "search_companies",
@@ -89,3 +95,46 @@ async def test_mcp_success_has_data_only_result(
     assert structured_content["data"] is not None
     assert structured_content["error"] is None
     assert structured_content["data"][0]["match_confidence"] == "exact"
+
+
+@pytest.mark.anyio
+async def test_registration_statement_tool_passes_singular_stmt_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DART_MCP_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPEN_DART_API_KEY", "test-key")
+    captured: list[str] = []
+
+    def record_registration_call(
+        _self: CrawlerService,
+        corp_code: str,
+        stmt_type: str,
+        bgn_de: str,
+        end_de: str,
+    ) -> Result[RegistrationStatementData]:
+        assert corp_code == "00126380"
+        assert bgn_de == "20240101"
+        assert end_de == "20241231"
+        captured.append(stmt_type)
+        return Result.failure(
+            error_info(ErrorCode.NOT_FOUND, "empty", retryable=False)
+        )
+
+    monkeypatch.setattr(
+        CrawlerService,
+        "get_registration_statements",
+        record_registration_call,
+    )
+
+    await mcp.call_tool(
+        "get_registration_statements",
+        {
+            "corp_code": "00126380",
+            "stmt_type": "debt_securities",
+            "bgn_de": "20240101",
+            "end_de": "20241231",
+        },
+    )
+
+    assert captured == ["debt_securities"]

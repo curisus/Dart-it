@@ -711,3 +711,147 @@ def test_fetch_material_event_rows_rejects_malformed_endpoint_without_http_call(
     assert result.error is not None
     assert result.error.code is ErrorCode.INVALID_INPUT
     assert client.requests == []
+
+
+def test_fetch_registration_statement_groups_builds_url_and_preserves_groups() -> None:
+    body = (
+        b'{"status":"000","message":"OK","group":['
+        b'{"title":"\xec\x9d\xbc\xeb\xb0\x98\xec\x82\xac\xed\x95\xad",'
+        b'"list":[{"corp_code":"00126380","rcept_no":"20240115000123",'
+        b'"totally_unknown_field":"kept"}]},'
+        b'{"title":"\xeb\xb9\x88\xea\xb7\xb8\xeb\xa3\xb9","list":[]}]}'
+    )
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_registration_statement_groups(
+        "estkRs", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is True
+    assert result.data is not None
+    assert [group.title for group in result.data] == ["일반사항", "빈그룹"]
+    assert result.data[0].list[0]["totally_unknown_field"] == "kept"
+    assert result.data[1].list == ()
+    assert client.requests[0][0].endswith("estkRs.json")
+    assert client.requests[0][1] == {
+        "crtfc_key": "test-key",
+        "corp_code": "00126380",
+        "bgn_de": "20240101",
+        "end_de": "20241231",
+    }
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b'{"status":"000","message":"OK"}', id="missing_group"),
+        pytest.param(b'{"status":"000","message":"OK","group":[]}', id="empty_group"),
+    ],
+)
+def test_fetch_registration_statement_groups_status_000_without_groups_is_empty_tuple(
+    body: bytes,
+) -> None:
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_registration_statement_groups(
+        "estkRs", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is True
+    assert result.data == ()
+
+
+def test_fetch_registration_statement_groups_maps_not_found_status() -> None:
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"013","message":"no data"}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_registration_statement_groups(
+        "estkRs", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+
+
+def test_fetch_registration_statement_groups_maps_auth_failure_status() -> None:
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"010","message":"bad key"}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_registration_statement_groups(
+        "estkRs", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.UPSTREAM_AUTH
+
+
+def test_fetch_registration_statement_groups_maps_malformed_json_to_parse_failed() -> (
+    None
+):
+    client = FakeHttpClient([HttpResponse(200, {}, b"not json at all")])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_registration_statement_groups(
+        "estkRs", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.PARSE_FAILED
+
+
+def test_fetch_registration_statement_groups_missing_group_title_is_parse_failed() -> (
+    None
+):
+    body = b'{"status":"000","message":"OK","group":[{"list":[]}]}'
+    client = FakeHttpClient([HttpResponse(200, {}, body)])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_registration_statement_groups(
+        "estkRs", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.PARSE_FAILED
+
+
+def test_fetch_registration_statement_groups_missing_group_list_is_parse_failed() -> (
+    None
+):
+    client = FakeHttpClient(
+        [HttpResponse(200, {}, b'{"status":"000","message":"OK","group":[{"title":"x"}]}')]
+    )
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_registration_statement_groups(
+        "estkRs", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.PARSE_FAILED
+
+
+def test_fetch_registration_statement_groups_rejects_malformed_endpoint_without_call() -> (
+    None
+):
+    client = FakeHttpClient([])
+    api = DartApi(client, api_key="test-key")
+
+    result = api.fetch_registration_statement_groups(
+        "bad endpoint!", "00126380", "20240101", "20241231"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert client.requests == []

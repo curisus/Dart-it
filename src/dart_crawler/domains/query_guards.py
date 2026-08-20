@@ -36,7 +36,11 @@ MAX_TOPICS_PER_QUERY: Final = 10
 MAX_RESPONSE_ROWS: Final = 1_000
 
 _CORP_CODE_PATTERN: Final = re.compile(r"^\d{8}$", re.ASCII)
+_DATE_PATTERN: Final = re.compile(r"^\d{8}$", re.ASCII)
 _SEARCH_COMPANIES_NEXT_ACTION: Final = "search_companies로 corp_code(8자리)를 확인하세요."
+_DATE_FORMAT_NEXT_ACTION: Final = "bgn_de와 end_de를 YYYYMMDD 형식으로 입력하세요."
+_DATE_ORDER_NEXT_ACTION: Final = "bgn_de가 end_de보다 늦지 않도록 입력하세요."
+_DATE_REQUIRED_NEXT_ACTION: Final = "bgn_de와 end_de(YYYYMMDD)를 모두 입력하세요."
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +197,42 @@ def guard_row_count(
         ),
         next_action=next_action,
     )
+
+
+def guard_required_date_range(bgn_de: str, end_de: str) -> GuardViolation | None:
+    """Reject a missing, malformed, or inverted required receipt-date range."""
+    for field_name, value in (("bgn_de", bgn_de), ("end_de", end_de)):
+        if not value:
+            return GuardViolation(
+                error_info(
+                    ErrorCode.INVALID_INPUT,
+                    "접수일 기간이 비어 있습니다.",
+                    retryable=False,
+                    details={"field": field_name},
+                ),
+                next_action=_DATE_REQUIRED_NEXT_ACTION,
+            )
+        if _DATE_PATTERN.match(value) is None:
+            return GuardViolation(
+                error_info(
+                    ErrorCode.INVALID_INPUT,
+                    "접수일 형식이 올바르지 않습니다.",
+                    retryable=False,
+                    details={"field": field_name, "value": value},
+                ),
+                next_action=_DATE_FORMAT_NEXT_ACTION,
+            )
+    if bgn_de > end_de:
+        return GuardViolation(
+            error_info(
+                ErrorCode.INVALID_INPUT,
+                "bgn_de가 end_de보다 늦습니다.",
+                retryable=False,
+                details={"bgn_de": bgn_de, "end_de": end_de},
+            ),
+            next_action=_DATE_ORDER_NEXT_ACTION,
+        )
+    return None
 
 
 def _is_corp_code(value: str) -> bool:

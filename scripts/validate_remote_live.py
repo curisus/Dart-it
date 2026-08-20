@@ -66,6 +66,8 @@ _SCALE_FACTORS: Final = (1, 1_000, 1_000_000, 100_000_000)
 _STATEMENTS_ALIAS: Final = "statements"
 _NOTE_KIND: Final = "note"
 _BALANCE_SHEET_KIND: Final = "balance_sheet"
+_DEBT_SECURITIES_STMT_TYPE: Final = "debt_securities"
+_DEBT_SECURITIES_LABEL: Final = "증권신고서(채무증권)"
 
 
 class LiveValidationError(RuntimeError):
@@ -667,7 +669,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     recorder.facts["tool_names"] = list(tool_names)
     recorder.record(
         "tools/list surface",
-        passed=len(tool_names) == 12 and "export_report_excel" not in tool_names,
+        passed=len(tool_names) == 13 and "export_report_excel" not in tool_names,
         detail=f"{len(tool_names)}개: {', '.join(tool_names)}",
     )
 
@@ -806,6 +808,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     _run_company_profile_check(client, recorder, corp_code)
     _run_ownership_reports_check(client, recorder, corp_code)
     _run_material_events_check(client, recorder, corp_code)
+    _run_registration_statements_check(client, recorder, corp_code)
 
 
 def _run_negative_cases(
@@ -1275,6 +1278,95 @@ def _run_material_events_check(
             "[WARN] get_material_events row_count=0 for every requested "
             f"event_type, corp_code={corp_code} bgn_de={bgn_de} end_de={end_de} — "
             "해당 기간에 주요사항보고 정보가 비어 있습니다."
+        )
+
+
+def _run_registration_statements_check(
+    client: RemoteClient,
+    recorder: Recorder,
+    corp_code: str,
+) -> None:
+    bgn_de = "20200101"
+    end_de = time.strftime("%Y%m%d")
+    payload = _as_object(
+        _data(
+            client.call(
+                "get_registration_statements",
+                {
+                    "corp_code": corp_code,
+                    "stmt_type": _DEBT_SECURITIES_STMT_TYPE,
+                    "bgn_de": bgn_de,
+                    "end_de": end_de,
+                },
+                label="get_registration_statements(debt_securities)",
+            ),
+            "get_registration_statements(debt_securities)",
+        ),
+        "RegistrationStatementData",
+    )
+    groups = [
+        _as_object(row, "registration statement group")
+        for row in _as_array(payload.get("groups"), "groups")
+    ]
+    row_counts: list[int] = []
+    group_row_matches: list[bool] = []
+    group_titles: list[str] = []
+    for group in groups:
+        title = _as_text(group.get("title"), "registration statement group title")
+        rows = _as_array(group.get("rows"), "registration statement group rows")
+        row_count = _as_int(
+            group.get("row_count"), "registration statement group row_count"
+        )
+        row_counts.append(row_count)
+        group_row_matches.append(row_count == len(rows))
+        group_titles.append(title)
+    returned_group_count = _as_int(
+        payload.get("returned_group_count"),
+        "returned_group_count",
+    )
+    returned_row_count = _as_int(
+        payload.get("returned_row_count"),
+        "returned_row_count",
+    )
+    stmt_type = _as_text(payload.get("stmt_type"), "stmt_type")
+    label = _as_text(payload.get("label"), "label")
+    returned_corp_code = _as_text(payload.get("corp_code"), "corp_code")
+    returned_bgn_de = _as_text(payload.get("bgn_de"), "bgn_de")
+    returned_end_de = _as_text(payload.get("end_de"), "end_de")
+    recorder.facts["get_registration_statements"] = {
+        "corp_code": returned_corp_code,
+        "stmt_type": stmt_type,
+        "label": label,
+        "bgn_de": returned_bgn_de,
+        "end_de": returned_end_de,
+        "returned_group_count": returned_group_count,
+        "observed_group_count": len(groups),
+        "returned_row_count": returned_row_count,
+        "sum_group_row_count": sum(row_counts),
+        "group_titles": group_titles,
+        "group_row_counts_match_rows": group_row_matches,
+    }
+    recorder.record(
+        "get_registration_statements(debt_securities) 그룹 계약",
+        passed=returned_group_count == len(groups)
+        and returned_row_count == sum(row_counts)
+        and stmt_type == _DEBT_SECURITIES_STMT_TYPE
+        and label == _DEBT_SECURITIES_LABEL
+        and returned_corp_code == corp_code
+        and returned_bgn_de == bgn_de
+        and returned_end_de == end_de
+        and all(group_titles)
+        and all(group_row_matches),
+        detail=(
+            f"corp_code={returned_corp_code} stmt_type={stmt_type} label={label!r} "
+            f"groups={returned_group_count}/{len(groups)} rows={returned_row_count}/{sum(row_counts)}"
+        ),
+    )
+    if returned_row_count < 1:
+        print(
+            "[WARN] get_registration_statements(debt_securities) row_count=0 for "
+            f"corp_code={corp_code} bgn_de={bgn_de} end_de={end_de} — "
+            "해당 기간에 증권신고서(채무증권) 데이터가 비어 있습니다."
         )
 
 

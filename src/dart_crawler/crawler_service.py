@@ -33,6 +33,10 @@ from dart_crawler.domains.material_events import (
     MaterialEventService,
 )
 from dart_crawler.domains.ownership import OwnershipReportData, OwnershipService
+from dart_crawler.domains.registration_statements import (
+    RegistrationStatementData,
+    RegistrationStatementService,
+)
 from dart_crawler.domains.report_topics import ReportTopicData, ReportTopicService
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
 from dart_crawler.filing_service import FilingService
@@ -161,6 +165,18 @@ class CrawlerService:
         """Return DS005 주요사항보고 rows for the event types and receipt-date range."""
         return MaterialEventService(self._api).get(
             corp_code, event_types, bgn_de, end_de
+        )
+
+    def get_registration_statements(
+        self,
+        corp_code: str,
+        stmt_type: str,
+        bgn_de: str,
+        end_de: str,
+    ) -> Result[RegistrationStatementData]:
+        """Return DS006 securities-registration groups for one stmt_type."""
+        return RegistrationStatementService(self._api).get(
+            corp_code, stmt_type, bgn_de, end_de
         )
 
     def list_report_filings(
