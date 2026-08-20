@@ -22,9 +22,10 @@ from dart_crawler.section_models import ReportSectionData, ReportSectionList
 _API_KEY_HEADER: Final = "x-opendart-api-key"
 _AUTHORIZATION_HEADER: Final = "authorization"
 _BEARER_SCHEME: Final = "bearer"
+_API_KEY_QUERY_PARAM: Final = "key"
 _MISSING_KEY_NEXT_ACTION: Final = (
-    "X-OpenDART-API-Key 헤더(또는 Authorization: Bearer)에 "
-    "OpenDART API 키를 설정한 뒤 다시 호출하세요."
+    "X-OpenDART-API-Key 헤더(또는 Authorization: Bearer, "
+    "또는 URL의 ?key= 값)에 OpenDART API 키를 설정한 뒤 다시 호출하세요."
 )
 
 T = TypeVar("T")
@@ -169,7 +170,7 @@ def _with_remote_service(
     ctx: Context,
     operation: Callable[[CrawlerService], Result[T]],
 ) -> Result[T]:
-    api_key = _api_key_from_headers(ctx.headers)
+    api_key = _api_key_from_request(ctx)
     if not api_key.ok or api_key.data is None:
         return Result.failure(
             api_key.error if api_key.error is not None else _missing_key_error(),
@@ -177,6 +178,38 @@ def _with_remote_service(
         )
     with HttpxClient() as http_client:
         return operation(CrawlerService(api_key.data, http_client))
+
+
+def _api_key_from_request(ctx: Context) -> Result[SecretStr]:
+    """Read the caller's OpenDART key from the headers, then the URL query.
+
+    Headers stay the primary channel: a key inside the URL can end up in
+    server access logs. The ``?key=`` fallback exists for MCP clients that
+    cannot attach request headers at all — claude.ai custom connectors on
+    accounts without the request-header beta send only the configured URL.
+    """
+    from_headers = _api_key_from_headers(ctx.headers)
+    if from_headers.ok:
+        return from_headers
+    query_key = _query_parameter(ctx, _API_KEY_QUERY_PARAM)
+    if query_key:
+        return Result.success(SecretStr(query_key))
+    return _missing_key()
+
+
+def _query_parameter(ctx: Context, name: str) -> str:
+    try:
+        request = ctx.request_context.request
+    except ValueError:
+        # A Context built with no request_context at all. On the shared path
+        # ctx.headers raises this first, so the guard only protects direct
+        # calls; stdio reaches the getattr below with request=None instead.
+        return ""
+    params = getattr(request, "query_params", None)
+    if not isinstance(params, Mapping):
+        return ""
+    value = params.get(name)
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _api_key_from_headers(headers: Mapping[str, str] | None) -> Result[SecretStr]:
@@ -219,6 +252,6 @@ def _missing_key() -> Result[SecretStr]:
 def _missing_key_error() -> ErrorInfo:
     return error_info(
         ErrorCode.CONFIG_ERROR,
-        "OpenDART API 키 헤더가 없습니다.",
+        "요청에 OpenDART API 키가 없습니다.",
         retryable=False,
     )

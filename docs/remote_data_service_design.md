@@ -13,7 +13,7 @@
 |---|---|
 | 도구 목록 | **5개**: 기존 3개(search_companies, list_report_filings, list_report_attachments) + 신규 `list_report_sections`(구역 목차) + `get_report_sections`(선택 구역 표 데이터). `export_report_excel`은 원격판 제외·로컬판 유지 |
 | 저장소 구조 | **현 저장소 확장** — api/ 진입점 + vercel.json, src/dart_crawler 공유(DRY) |
-| 키 전달 | **헤더 필수** — 요청마다 HTTP 헤더로 전달, 서버 env 폴백 없음, URL 노출 금지 |
+| 키 전달 | **헤더 필수** — 요청마다 HTTP 헤더로 전달, 서버 env 폴백 없음, URL 노출 금지. **2026-08-20 일부 번복(사용자 AskUserQuestion 승인)**: claude.ai 커넥터의 Request headers 기능이 베타 미배포인 계정은 헤더를 전혀 보낼 수 없음이 확인되어, 최후 폴백으로 URL `?key=` 쿼리 전달을 허용. 헤더가 항상 우선이며 OAuth 구현은 공개 확산 시점까지 보류 |
 | 접속 방식 | **MCP streamable-http 단독** |
 
 ## 탐색으로 확정된 사실 (설계 근거, 전부 file:line 검증)
@@ -28,9 +28,10 @@
 
 ## 설계
 
-### 1. 요청별 API 키 주입 (헤더 필수)
+### 1. 요청별 API 키 주입 (헤더 우선, 쿼리 최후 폴백)
 
-- 헤더: `X-OpenDART-API-Key` 1순위, `Authorization: Bearer <키>` 폴백 수용(claude.ai 커넥터가 Bearer만 지원하는 경우 흡수). Claude Code 등록 예: `claude mcp add --transport http dart <url> --header "X-OpenDART-API-Key: <키>"`.
+- 헤더: `X-OpenDART-API-Key` 1순위, `Authorization: Bearer <키>` 2순위 폴백. Claude Code 등록 예: `claude mcp add --transport http dart <url> --header "X-OpenDART-API-Key: <키>"`.
+- 쿼리 폴백(2026-08-20 추가, 사용자 승인): 헤더를 전혀 못 보내는 클라이언트(Request headers 베타 미배포 claude.ai 계정)를 위해 URL `?key=<키>`를 3순위로 수용. 키가 서버 접속 로그에 남을 수 있으므로 헤더가 가능해지면 헤더 사용을 권장.
 - 검증 계층: **HTTP 401이 아니라 도구 계층의 `Result.failure(ErrorCode.CONFIG_ERROR)`** — 401은 MCP 클라이언트의 OAuth 탐색을 유발해 혼란. `initialize`/`tools/list`는 키 없이 성공해야 커넥터 등록이 가능. 형식은 맞으나 무효인 키는 기존 `UPSTREAM_AUTH` 매핑이 처리. 새 ErrorCode 불필요.
 - 키 획득: 도구 파라미터에 `ctx: Context` 어노테이션 → SDK 자동 주입 → `ctx.headers`에서 추출(`_api_key_from_headers(headers) -> Result[SecretStr]`).
 
@@ -157,6 +158,6 @@ class ReportSectionData(BaseModel):    # get_report_sections 응답
 | DNS rebinding 자동 활성화 → Vercel 전 요청 421 | lowlevel/server.py:738-744 (직접 확인) | build_app에서 명시적 비활성화 |
 | filterwarnings=["error"] + 신규 import 경고 | pyproject:93 | starlette/uvicorn은 이미 mcp 전이 의존으로 설치 확인, SDK deprecated 로깅 API 사용 금지, 테스트에서 실제 import |
 | HTTP 401 → 클라이언트 OAuth 탐색 혼선 | MCP 스펙 동작 | 도구 계층 Result 봉투로 통일 |
-| claude.ai 커넥터가 커스텀 헤더 미지원 | Bearer 중심 | Authorization: Bearer 폴백 |
+| claude.ai 커넥터가 커스텀 헤더 미지원 | Bearer 중심 | Authorization: Bearer 폴백 → **대응 불충분으로 판명(2026-08-20)**: Request headers 베타 미배포 계정은 헤더 자체를 못 보냄. URL `?key=` 쿼리 폴백으로 해소 |
 | Vercel=Linux vs 개발=Windows | ci.yml ubuntu experimental | 세션 C에서 ubuntu 승격 |
 | `Context` 공개 import 경로 미확정 | mcpserver/context.py 정의만 확인 | 구현 시 확인(기능 영향 없음) |

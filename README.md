@@ -70,9 +70,10 @@ uv run dart-crawler-mcp
 설치 없이 사용할 수 있는 원격 서버가 Vercel의 Linux 환경에 배포되어 있습니다.
 
 - 주소: `https://dart-mcp-remote.vercel.app/api/mcp`
-- 인증: 요청 헤더로 본인의 OpenDART API 키를 전달합니다. 서버는 키를 저장하지 않으며, 키 없이 도구를 호출하면 `CONFIG_ERROR`로 거부합니다. 서버 연결과 도구 목록 확인은 키 없이도 됩니다.
-  - 기본: `X-OpenDART-API-Key: 발급받은_키`
-  - 대체: `Authorization: Bearer 발급받은_키`
+- 인증: 요청마다 본인의 OpenDART API 키를 전달합니다. 서버는 키를 저장하지 않으며, 키 없이 도구를 호출하면 `CONFIG_ERROR`로 거부합니다. 서버 연결과 도구 목록 확인은 키 없이도 됩니다.
+  - 기본: `X-OpenDART-API-Key: 발급받은_키` 헤더
+  - 대체: `Authorization: Bearer 발급받은_키` 헤더
+  - 헤더를 못 쓰는 클라이언트용: URL 뒤에 `?key=발급받은_키`
 - 도구: `search_companies`, `list_report_filings`, `list_report_attachments`, `list_report_sections`, `get_report_sections` 5개 (조회 전용)
 - Excel 파일 생성(`export_report_excel`)은 원격 서버가 파일을 저장할 위치가 없어 제공하지 않습니다. 로컬 서버에서만 가능합니다.
 
@@ -89,7 +90,13 @@ Claude for Excel(Excel 안에서 Claude를 쓰는 추가 기능)은 claude.ai �
 5. Excel에서 Claude 사이드바를 열고, 대화 입력창의 **+** 버튼 → **Connectors**에서 방금 등록한 커넥터를 켭니다.
 6. 예를 들어 "삼성전자 2025 사업보고서의 재무상태표를 가져와 시트에 정리해줘"라고 요청하면 Claude가 아래 원격 도구 사용 순서대로 호출해 데이터를 가져옵니다.
 
-주의: Request headers 기능은 베타라서 계정에 따라 아직 보이지 않을 수 있습니다. 이 항목 없이 커넥터만 등록하면 서버 연결과 도구 목록 확인까지는 되지만, 실제 조회는 키가 없어 `CONFIG_ERROR`로 거부됩니다. claude.ai 웹과 Claude Desktop에서도 같은 절차로 사용할 수 있습니다.
+주의: Request headers 기능은 베타라서 계정에 따라 아직 보이지 않을 수 있습니다. **Request headers 칸이 없다면**, 2번의 URL 대신 키를 포함한 주소를 등록하세요.
+
+```
+https://dart-mcp-remote.vercel.app/api/mcp?key=발급받은_키
+```
+
+이 방식은 키가 주소에 포함되어 서버 운영자의 접속 기록에 남을 수 있으므로, Request headers 칸이 생기면 헤더 방식으로 바꾸는 것을 권장합니다. claude.ai 웹과 Claude Desktop에서도 같은 절차로 사용할 수 있습니다.
 
 ### Claude Code에서 원격 서버 등록
 
