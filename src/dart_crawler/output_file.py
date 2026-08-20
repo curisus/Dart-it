@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING
 
 from openpyxl import load_workbook
 
+from dart_crawler.workbook_metadata import (
+    ATTACHMENT_ID_KEY,
+    RCEPT_NO_KEY,
+    SOURCE_SHA256_KEY,
+)
 from dart_crawler.workbook_validation import METADATA_SHEET
 
 if TYPE_CHECKING:
@@ -51,7 +56,7 @@ def matching_existing_file(path: Path, context: ExportContext) -> bool:
     except (OSError, KeyError, ValueError, zipfile.BadZipFile):
         return False
     return (
-        values.get("rcept_no") == context.rcept_no
-        and values.get("attachment_id") == context.attachment_id
-        and values.get("source_sha256") == context.document.source_sha256
+        values.get(RCEPT_NO_KEY) == context.rcept_no
+        and values.get(ATTACHMENT_ID_KEY) == context.attachment_id
+        and values.get(SOURCE_SHA256_KEY) == context.document.source_sha256
     )

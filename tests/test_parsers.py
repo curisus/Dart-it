@@ -412,6 +412,471 @@ def test_note_sections_split_on_indented_note_headings() -> None:
     assert "주석 2" in titles
 
 
+_INCOME_STATEMENT = (
+    "<table><tr><td>손익계산서</td><td>제 5 기</td></tr>"
+    "<tr><td>매출액</td><td>100</td></tr></table>"
+)
+
+
+def test_note_sections_keep_statement_titled_tables_in_one_sheet() -> None:
+    html = (
+        "<document>"
+        "<p>감사보고서</p>" + _INCOME_STATEMENT + "<heading>주석</heading>"
+        "<p>34. 특수관계자</p>"
+        "<p>(4) 수령한 배당내역은 다음과 같습니다.</p>"
+        "<table><tr><td>(주1)</td>"
+        "<td>배당금수익은 포괄손익계산서상 매출액으로 표시하고 있습니다.</td></tr></table>"
+        "<p>(5) 지급한 배당내역은 다음과 같습니다.</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    titles = [section.title for section in result.data.sections]
+    assert titles == ["본문", "손익계산서", "주석", "주석 34"]
+    note_section = result.data.sections[3]
+    assert [block.kind for block in note_section.blocks] == [
+        BlockKind.PARAGRAPH,
+        BlockKind.PARAGRAPH,
+        BlockKind.TABLE,
+        BlockKind.PARAGRAPH,
+    ]
+
+
+def test_note_sections_keep_statement_headings_in_one_sheet() -> None:
+    html = (
+        "<document>"
+        "<p>감사보고서</p>" + _INCOME_STATEMENT + "<heading>주석</heading>"
+        "<p>34. 특수관계자</p>"
+        "<heading>손익계산서</heading>"
+        "<p>이어지는 주석 본문입니다.</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    titles = [section.title for section in result.data.sections]
+    assert titles == ["본문", "손익계산서", "주석", "주석 34"]
+    assert len(result.data.sections[3].blocks) == 3
+
+
+def test_first_statement_inside_a_note_titled_section_still_opens_its_sheet() -> None:
+    html = (
+        "<document>"
+        "<heading>(첨부)재무제표 및 주석</heading>"
+        "<p>다음은 재무제표입니다.</p>"
+        "<table><tr><td>재무상태표</td><td>제 5 기</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        + _INCOME_STATEMENT
+        + "<table><tr><td>자본변동표</td><td>제 5 기</td></tr>"
+        "<tr><td>자본총계</td><td>100</td></tr></table>"
+        "<table><tr><td>현금흐름표</td><td>제 5 기</td></tr>"
+        "<tr><td>현금성자산</td><td>100</td></tr></table>"
+        "<p>1. 일반사항</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    kinds = {section.kind for section in result.data.sections}
+    assert SectionKind.BALANCE_SHEET in kinds
+    assert SectionKind.INCOME in kinds
+    assert SectionKind.EQUITY in kinds
+    assert SectionKind.CASH_FLOW in kinds
+
+
+def test_standalone_statement_title_lines_open_their_own_sections() -> None:
+    html = (
+        "<document>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<p>현대자동차주식회사</p>"
+        "<p>재 무 상 태 표</p>"
+        "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "<p>손 익 계 산 서</p>"
+        "<table><tr><td>과 목</td><td>제58기</td></tr>"
+        "<tr><td>매출액</td><td>100</td></tr></table>"
+        "<p>자 본 변 동 표</p>"
+        "<table><tr><td>과 목</td><td>제58기</td></tr>"
+        "<tr><td>자본총계</td><td>100</td></tr></table>"
+        "<p>현 금 흐 름 표</p>"
+        "<table><tr><td>과 목</td><td>제58기</td></tr>"
+        "<tr><td>현금성자산</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    kinds = {section.kind for section in result.data.sections}
+    assert {
+        SectionKind.BALANCE_SHEET,
+        SectionKind.INCOME,
+        SectionKind.EQUITY,
+        SectionKind.CASH_FLOW,
+    } <= kinds
+    for kind in (
+        SectionKind.BALANCE_SHEET,
+        SectionKind.INCOME,
+        SectionKind.EQUITY,
+        SectionKind.CASH_FLOW,
+    ):
+        assert any(
+            block.kind is BlockKind.TABLE
+            for section in result.data.sections
+            if section.kind is kind
+            for block in section.blocks
+        )
+
+
+def test_consolidated_statement_title_line_opens_its_section() -> None:
+    html = (
+        "<document>"
+        "<heading>(첨부)연 결 재 무 제 표</heading>"
+        "<p>연 결 재 무 상 태 표</p>"
+        "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert any(
+        section.kind is SectionKind.BALANCE_SHEET
+        for section in result.data.sections
+    )
+
+
+def test_statement_title_lines_without_a_table_do_not_open_sections() -> None:
+    html = (
+        "<document>"
+        "<heading>목 차</heading>"
+        "<p>재 무 상 태 표</p>"
+        "<p>포 괄 손 익 계 산 서</p>"
+        "<p>자 본 변 동 표</p>"
+        "<p>현 금 흐 름 표</p>"
+        "<p>주 석</p>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<table><tr><td>재 무 상 태 표</td><td>제58기말</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    titles = [section.title for section in result.data.sections]
+    assert titles == ["목 차", "(첨부)재 무 제 표", "재무상태표"]
+
+
+def test_listed_statement_titles_open_no_section_except_beside_a_table() -> None:
+    """A listed title yields to the next title; only one beside a table opens.
+
+    Suppressing that last entry too would need the line before it, and a
+    running header repeating one title would then lose its statement, which
+    costs the whole file instead of one sheet.
+    """
+    html = (
+        "<document>"
+        "<heading>목 차</heading>"
+        "<p>재 무 상 태 표</p>"
+        "<p>포 괄 손 익 계 산 서</p>"
+        "<p>자 본 변 동 표</p>"
+        "<table><tr><td>구 분</td><td>쪽</td></tr>"
+        "<tr><td>재무제표</td><td>1</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert [section.title for section in result.data.sections] == [
+        "목 차",
+        "자본변동표",
+    ]
+
+
+def test_repeated_statement_title_keeps_opening_its_section() -> None:
+    html = (
+        "<document>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<p>재 무 상 태 표</p>"
+        "<p></p>"
+        "<p>재 무 상 태 표</p>"
+        "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert any(
+        block.kind is BlockKind.TABLE
+        for section in result.data.sections
+        if section.kind is SectionKind.BALANCE_SHEET
+        for block in section.blocks
+    )
+
+
+def test_statement_title_line_opens_a_section_across_caption_lines() -> None:
+    html = (
+        "<document>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<p>재 무 상 태 표</p>"
+        "<p>제 58 기 2025년 12월 31일 현재</p>"
+        "<p>주식회사 예시</p>"
+        "<p>(단위: 백만원)</p>"
+        "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert [section.title for section in result.data.sections] == [
+        "(첨부)재 무 제 표",
+        "재무상태표",
+    ]
+
+
+def test_statement_title_line_opens_a_section_across_a_blank_line() -> None:
+    html = (
+        "<document>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<p>현대자동차주식회사</p>"
+        "<p>재 무 상 태 표</p>"
+        "<p></p>"
+        "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert [section.title for section in result.data.sections] == [
+        "(첨부)재 무 제 표",
+        "재무상태표",
+    ]
+
+
+def test_table_title_is_read_from_the_first_three_rows() -> None:
+    html = (
+        "<document>"
+        "<p>감사보고서</p>"
+        "<table>"
+        "<tr><td>주식회사 예시</td></tr>"
+        "<tr><td>제 5 기</td></tr>"
+        "<tr><td>현 금 흐 름 표</td></tr>"
+        "<tr><td>영업활동현금흐름</td><td>100</td></tr>"
+        "</table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert [section.title for section in result.data.sections] == [
+        "본문",
+        "현금흐름표",
+    ]
+
+
+def test_comprehensive_income_table_keeps_the_income_statement_title() -> None:
+    html = (
+        "<document>"
+        "<p>감사보고서</p>"
+        "<table><tr><td>연 결 포 괄 손 익 계 산 서</td><td>제 5 기</td></tr>"
+        "<tr><td>매출액</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert [section.title for section in result.data.sections] == [
+        "본문",
+        "손익계산서",
+    ]
+
+
+def test_numbered_note_titles_do_not_open_statement_sections() -> None:
+    html = (
+        "<document>"
+        "<heading>주석</heading>"
+        "<p>30. 현금흐름표</p>"
+        "<p>(3) 요약연결현금흐름표</p>"
+        "<table><tr><td>구 분</td><td>당기</td></tr>"
+        "<tr><td>영업활동</td><td>100</td></tr></table>"
+        "<p>22. 기타포괄손익누계액</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    titles = [section.title for section in result.data.sections]
+    assert titles == ["주석", "주석 30", "주석 22"]
+
+
+def test_table_less_statement_title_does_not_suppress_the_real_statement() -> None:
+    html = (
+        "<document>"
+        "<heading>재무상태표</heading>"
+        "<p>재무상태표는 첨부를 참조하시기 바랍니다.</p>"
+        "<heading>주석</heading>"
+        "<p>1. 회사의 개요</p>"
+        "<table><tr><td>재무상태표</td><td>제 5 기</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert any(
+        block.kind is BlockKind.TABLE
+        for section in result.data.sections
+        if section.kind is SectionKind.BALANCE_SHEET
+        for block in section.blocks
+    )
+
+
+def test_first_statement_heading_after_note_body_still_opens_its_sheet() -> None:
+    html = (
+        "<document>"
+        "<heading>주석</heading>"
+        "<p>1. 일반사항</p>"
+        "<heading>재무상태표</heading>"
+        "<table><tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    kinds = {section.kind for section in result.data.sections}
+    assert SectionKind.BALANCE_SHEET in kinds
+
+
+def test_note_paragraph_splits_rows_at_title_and_item_markers() -> None:
+    html = (
+        "<document>"
+        '<p><span usermark="B">41. 중단영업</span>(1) 중단영업의 내용연결실체는 '
+        "매각을 결정하였습니다.(2) 표시된 내역은 다음과 같습니다.</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert [(block.kind, block.text) for block in blocks] == [
+        (BlockKind.PARAGRAPH, "41. 중단영업"),
+        (BlockKind.PARAGRAPH, "(1) 중단영업의 내용연결실체는 매각을 결정하였습니다."),
+        (BlockKind.PARAGRAPH, "(2) 표시된 내역은 다음과 같습니다."),
+    ]
+    coverage = result.data.source_coverage
+    assert coverage is not None
+    assert coverage.complete is True
+
+
+def test_paragraph_keeps_trailing_bare_item_marker_with_its_sentence() -> None:
+    html = (
+        "<document>"
+        '<p><span usermark="B">41. 중단영업</span>(1) 매각을 결정하였습니다.(2)</p>'
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert [block.text for block in blocks] == [
+        "41. 중단영업",
+        "(1) 매각을 결정하였습니다.(2)",
+    ]
+    coverage = result.data.source_coverage
+    assert coverage is not None
+    assert coverage.complete is True
+
+
+def test_paragraph_keeps_mid_sentence_enumeration_in_one_row() -> None:
+    html = (
+        "<document>"
+        "<p>회사의 내부회계관리제도는 (1) 자산의 거래와 처분을 반영하는 기록을 유지하고 "
+        "(2) 재무제표가 작성되도록 거래를 기록하며 (3) 자산의 취득을 예방합니다.</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert len(blocks) == 1
+    assert blocks[0].text.startswith("회사의 내부회계관리제도는 (1) 자산의")
+
+
+def test_paragraph_keeps_parenthesized_number_attached_to_word() -> None:
+    html = (
+        "<document>"
+        "<p>1. 배출권 무상할당 배출권은 영(0)으로 측정하여 인식하고 있습니다.</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    blocks = result.data.sections[0].blocks
+    assert [block.text for block in blocks] == [
+        "1. 배출권 무상할당 배출권은 영(0)으로 측정하여 인식하고 있습니다.",
+    ]
+
+
+def test_source_coverage_matches_for_item_marker_glued_inside_table_cell() -> None:
+    html = (
+        "<table><tr>"
+        "<td>발행일 이후 매 분기별 지급합니다.(2) 이자지급 조건</td>"
+        "<td>10</td>"
+        "</tr></table>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    table = result.data.sections[0].blocks[0]
+    assert table.rows == (("발행일 이후 매 분기별 지급합니다.(2) 이자지급 조건", "10"),)
+    coverage = result.data.source_coverage
+    assert coverage is not None
+    assert coverage.complete is True
+
+
 def test_html_parser_uses_same_document_block_shape() -> None:
     html = """
     <html><body>
@@ -435,3 +900,78 @@ def test_html_parser_uses_same_document_block_shape() -> None:
     ]
     assert blocks[1].rows[0] == ("항목", "")
     assert blocks[1].merged_ranges == ((1, 1, 1, 2),)
+
+
+def test_statement_title_line_opens_a_section_across_an_image() -> None:
+    html = (
+        "<document>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<p>현대자동차주식회사</p>"
+        "<p>재 무 상 태 표</p>"
+        "<img src='logo.jpg'/>"
+        "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+        "<tr><td>자산총계</td><td>100</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert any(
+        section.kind is SectionKind.BALANCE_SHEET and section.title == "재무상태표"
+        for section in result.data.sections
+    )
+def test_statement_title_does_not_claim_table_after_long_pre_image_narrative() -> None:
+    # Given
+    html = (
+        "<document>"
+        "<heading>(첨부)재 무 제 표</heading>"
+        "<p>재 무 상 태 표</p>"
+        "<p>첫 번째 설명 문단</p>"
+        "<p>두 번째 설명 문단</p>"
+        "<p>세 번째 설명 문단</p>"
+        "<img src='chart.jpg'/>"
+        "<table><tr><td>일반 항목</td><td>일반 값</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    # When
+    result = parse_html_document(html)
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert all(
+        section.kind is not SectionKind.BALANCE_SHEET
+        for section in result.data.sections
+    )
+
+
+def test_statement_title_opens_sections_with_bounded_gap_before_image() -> None:
+    # Given
+    html_documents = tuple(
+        (
+            "<document>"
+            "<heading>(첨부)재 무 제 표</heading>"
+            "<p>재 무 상 태 표</p>"
+            f"{caption}"
+            "<img src='chart.jpg'/>"
+            "<table><tr><td>과 목</td><td>제58기말</td></tr>"
+            "<tr><td>자산총계</td><td>100</td></tr></table>"
+            "</document>"
+        ).encode()
+        for caption in ("", "<p>단위: 백만원</p>")
+    )
+
+    # When
+    results = tuple(parse_html_document(html) for html in html_documents)
+
+    # Then
+    for result in results:
+        assert result.ok is True
+        assert result.data is not None
+        assert any(
+            section.kind is SectionKind.BALANCE_SHEET
+            for section in result.data.sections
+        )

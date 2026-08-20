@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from difflib import SequenceMatcher
-from typing import Protocol, assert_never
+from typing import Final, Protocol, assert_never
 
 from defusedxml import ElementTree
 
 from dart_crawler.api_models import DartListRow
-from dart_crawler.domain import Company, Market, ReportKind
+from dart_crawler.company_name_matching import (
+    CompanyCode,
+    _query_readings,
+    _QueryReadings,
+    _rank_company,
+)
+from dart_crawler.domain import Company, Market, MatchConfidence, ReportKind
 from dart_crawler.filing_service import matches_report_kind
 from dart_crawler.result import ErrorCode, Result, error_info
 from dart_crawler.zip_safety import ArchiveLimits, read_member
@@ -31,12 +36,18 @@ class CompanySource(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class CompanyCode:
-    """One row from the CORPCODE.xml archive."""
+class _SearchMatch:
+    """Internal ranking data for one company search candidate."""
 
-    corp_code: str
-    company_name: str
-    stock_code: str | None
+    entry: CompanyCode
+    score: float
+    confidence: MatchConfidence
+
+
+_WEAK_MATCH_SCORE: Final[float] = 85.0
+_WEAK_MATCH_NEXT_ACTION: Final[str] = (
+    "정확히 일치하는 회사명이 없습니다. 아래 번호 목록에서 회사를 선택하세요."
+)
 
 
 class CompanySearchService:
@@ -62,8 +73,8 @@ class CompanySearchService:
                 ),
                 next_action="audit, quarterly_review, half_year_review 중 하나를 입력하세요.",
             )
-        normalized_query = _normalize(query)
-        if not normalized_query:
+        query_readings = _query_readings(query)
+        if not query_readings.normalized:
             return Result.failure(
                 error_info(
                     ErrorCode.INVALID_INPUT,
@@ -97,12 +108,17 @@ class CompanySearchService:
                 next_action="OpenDART 회사코드 파일 형식을 확인하세요.",
             )
         ranked = sorted(
-            parsed_archive.data,
-            key=lambda entry: (-_score(entry, normalized_query), entry.company_name),
+            (
+                _rank_entry(entry, query_readings)
+                for entry in parsed_archive.data
+            ),
+            key=lambda match: (-match.score, match.entry.company_name),
         )
         matches: list[Company] = []
+        selected_matches: list[_SearchMatch] = []
         detail_type = _detail_type(parsed_kind)
-        for entry in ranked[:20]:
+        for match in ranked[:20]:
+            entry = match.entry
             rows_result = self._source.list_disclosures(entry.corp_code, detail_type)
             if (
                 not rows_result.ok
@@ -121,8 +137,10 @@ class CompanySearchService:
                     stock_code=entry.stock_code,
                     market=market,
                     ranking=len(matches) + 1,
+                    match_confidence=match.confidence,
                 )
             )
+            selected_matches.append(match)
             if len(matches) == 5:
                 break
         if not matches:
@@ -134,7 +152,10 @@ class CompanySearchService:
                 ),
                 next_action="회사명, 종목코드, 보고서 종류를 확인하세요.",
             )
-        return Result.success(tuple(matches))
+        return Result.success(
+            tuple(matches),
+            next_action=_weak_match_next_action(selected_matches[0]),
+        )
 
 
 def _parse_company_archive(content: bytes) -> Result[tuple[CompanyCode, ...]]:
@@ -199,22 +220,21 @@ def _parse_company_archive(content: bytes) -> Result[tuple[CompanyCode, ...]]:
     return Result.success(tuple(entries))
 
 
-def _normalize(value: str) -> str:
-    return "".join(value.casefold().split())
+def _rank_entry(
+    entry: CompanyCode,
+    query: _QueryReadings,
+) -> _SearchMatch:
+    match = _rank_company(entry, query)
+    return _SearchMatch(entry, match.score, match.confidence)
 
 
-def _score(entry: CompanyCode, query: str) -> float:
-    name = _normalize(entry.company_name)
-    stock = entry.stock_code or ""
-    if query == stock or query == entry.corp_code:
-        return 1_000.0
-    if query == name:
-        return 900.0
-    if name.startswith(query):
-        return 800.0
-    if query in name:
-        return 700.0
-    return SequenceMatcher(None, query, name).ratio() * 100.0
+def _weak_match_next_action(match: _SearchMatch) -> str | None:
+    if (
+        match.confidence is MatchConfidence.SIMILAR
+        and match.score < _WEAK_MATCH_SCORE
+    ):
+        return _WEAK_MATCH_NEXT_ACTION
+    return None
 
 
 def _detail_type(report_kind: ReportKind) -> str:

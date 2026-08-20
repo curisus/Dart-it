@@ -25,3 +25,4 @@ output/
 CLAUDE.md
 feedbacks/
 .claude/
+.vercel/

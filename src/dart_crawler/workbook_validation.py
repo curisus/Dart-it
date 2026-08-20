@@ -5,7 +5,7 @@ from __future__ import annotations
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, assert_never
+from typing import assert_never
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -18,25 +18,17 @@ from dart_crawler.result import ErrorCode, JsonValue, Result, error_info
 from dart_crawler.source_coverage import source_coverage_metadata
 from dart_crawler.value_parser import parse_cell_value, thousands_number_format
 from dart_crawler.workbook_layout import compute_sheet_layout
+from dart_crawler.workbook_metadata import (
+    SOURCE_RCEPT_NO_KEY,
+    ValidationContext,
+    shared_metadata_expectations,
+)
 
 METADATA_SHEET = "수집정보"
 IMAGE_PLACEHOLDER = "[이미지 내용 생략]"
 
 type CellValue = int | float | str
 type CellCoordinate = tuple[int, int]
-
-
-class ValidationContext(Protocol):
-    """Export fields required to validate workbook identity and contents."""
-
-    @property
-    def rcept_no(self) -> str: ...
-
-    @property
-    def attachment_id(self) -> str: ...
-
-    @property
-    def document(self) -> ParsedDocument: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +44,7 @@ def validate_workbook(
     *,
     collection_status: str,
     summary: ValidationSummary,
+    allow_legacy_source_receipt_omission: bool = False,
 ) -> Result[ValidationSummary]:
     """Reopen a saved workbook and compare its cells and merges to the source model."""
     try:
@@ -70,6 +63,7 @@ def validate_workbook(
             context,
             collection_status=collection_status,
             summary=summary,
+            allow_legacy_source_receipt_omission=allow_legacy_source_receipt_omission,
         )
         if not metadata_validation.ok:
             return metadata_validation
@@ -114,6 +108,7 @@ def _validate_metadata(
     *,
     collection_status: str,
     summary: ValidationSummary,
+    allow_legacy_source_receipt_omission: bool,
 ) -> Result[ValidationSummary]:
     for row in workbook[METADATA_SHEET].iter_rows():
         for cell in row:
@@ -124,24 +119,31 @@ def _validate_metadata(
                     cell=cell.coordinate,
                 )
     metadata = {
-        str(row[0].value): str(row[1].value)
+        str(row[0].value): (
+            "" if row[1].value is None else str(row[1].value)
+        )
         for row in workbook[METADATA_SHEET].iter_rows(min_col=1, max_col=2)
-        if row[0].value is not None and row[1].value is not None
+        if row[0].value is not None
     }
-    expected_metadata = {
-        "rcept_no": context.rcept_no,
-        "attachment_id": context.attachment_id,
-        "source_sha256": context.document.source_sha256,
-        "collection_status": collection_status,
-        "validation_status": "passed",
-        "validated_cell_count": str(summary.checked_cell_count),
-        "validated_merge_count": str(summary.checked_merge_count),
-    }
+    expected_metadata = shared_metadata_expectations(
+        context,
+        collection_status=collection_status,
+        summary=summary,
+    )
     if context.document.source_coverage is not None:
         expected_metadata.update(
             source_coverage_metadata(context.document.source_coverage)
         )
     for key, expected_value in expected_metadata.items():
+        # Every workbook written by the current exporter receives this row and
+        # immediately passes the stricter post-write validation. Its absence
+        # therefore identifies a pre-change workbook without parsing its ID.
+        if (
+            allow_legacy_source_receipt_omission
+            and key == SOURCE_RCEPT_NO_KEY
+            and key not in metadata
+        ):
+            continue
         if metadata.get(key) != expected_value:
             return _workbook_failure(
                 "metadata_mismatch",
@@ -150,7 +152,6 @@ def _validate_metadata(
                 actual=metadata.get(key, ""),
             )
     return Result.success(summary)
-
 
 def _validate_sheet(
     sheet: Worksheet,

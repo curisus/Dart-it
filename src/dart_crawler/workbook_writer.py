@@ -15,6 +15,17 @@ from dart_crawler.result import WarningCode
 from dart_crawler.source_coverage import source_coverage_metadata
 from dart_crawler.value_parser import parse_cell_value, thousands_number_format
 from dart_crawler.workbook_layout import apply_workbook_layout
+from dart_crawler.workbook_metadata import (
+    ATTACHMENT_ID_KEY,
+    COLLECTION_STATUS_KEY,
+    RCEPT_NO_KEY,
+    SOURCE_RCEPT_NO_KEY,
+    SOURCE_SHA256_KEY,
+    VALIDATED_CELL_COUNT_KEY,
+    VALIDATED_MERGE_COUNT_KEY,
+    VALIDATION_STATUS_KEY,
+    shared_metadata_expectations,
+)
 from dart_crawler.workbook_validation import IMAGE_PLACEHOLDER, METADATA_SHEET
 
 if TYPE_CHECKING:
@@ -91,6 +102,11 @@ def _metadata(
     status: CollectionStatus,
     validation_summary: ValidationSummary,
 ) -> dict[str, str]:
+    shared_metadata = shared_metadata_expectations(
+        context,
+        collection_status=status.value,
+        summary=validation_summary,
+    )
     coverage = context.document.source_coverage
     coverage_metadata = (
         source_coverage_metadata(coverage) if coverage is not None else {}
@@ -113,17 +129,18 @@ def _metadata(
         "report_title": context.report_title,
         "report_date": context.report_date or context.receipt_date,
         "receipt_date": context.receipt_date,
-        "rcept_no": context.rcept_no,
-        "attachment_id": context.attachment_id,
+        RCEPT_NO_KEY: shared_metadata[RCEPT_NO_KEY],
+        SOURCE_RCEPT_NO_KEY: shared_metadata[SOURCE_RCEPT_NO_KEY],
+        ATTACHMENT_ID_KEY: shared_metadata[ATTACHMENT_ID_KEY],
         "correction_chain": ",".join(context.correction_chain),
         "source_url": context.source_url,
         "source_type": context.document.source_type,
-        "source_sha256": context.document.source_sha256,
+        SOURCE_SHA256_KEY: shared_metadata[SOURCE_SHA256_KEY],
         "parser_version": context.parser_version,
-        "collection_status": status.value,
-        "validation_status": "passed",
-        "validated_cell_count": str(validation_summary.checked_cell_count),
-        "validated_merge_count": str(validation_summary.checked_merge_count),
+        COLLECTION_STATUS_KEY: shared_metadata[COLLECTION_STATUS_KEY],
+        VALIDATION_STATUS_KEY: shared_metadata[VALIDATION_STATUS_KEY],
+        VALIDATED_CELL_COUNT_KEY: shared_metadata[VALIDATED_CELL_COUNT_KEY],
+        VALIDATED_MERGE_COUNT_KEY: shared_metadata[VALIDATED_MERGE_COUNT_KEY],
         "discovered_section_count": str(len(context.document.sections)),
         "created_section_count": str(len(context.document.sections)),
         "missing_section_count": "0",

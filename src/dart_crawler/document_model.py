@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum, unique
+from typing import Final
+
+from dart_crawler.statement_lexicon import SectionKind as SectionKind  # noqa: PLC0414
+from dart_crawler.statement_lexicon import (
+    classify,
+    statement_kinds,
+    statement_title_in_rows,
+    statement_title_of_line,
+)
 
 
 @unique
@@ -19,17 +28,16 @@ class BlockKind(StrEnum):
     IMAGE = "image"
 
 
-@unique
-class SectionKind(StrEnum):
-    """Workbook categories inferred from section titles."""
-
-    OPINION = "opinion"
-    BALANCE_SHEET = "balance_sheet"
-    INCOME = "income"
-    EQUITY = "equity"
-    CASH_FLOW = "cash_flow"
-    NOTE = "note"
-    OTHER = "other"
+# Blocks that may sit between a statement title line and the table it names.
+# IMAGE cannot open a section by itself, so skipping it can never manufacture a
+# sheet that does not exist. HEADING is deliberately excluded: a heading DOES
+# open a section, so skipping it would let a table of contents or an audit
+# opinion heading fire a fake statement sheet.
+_TITLE_TO_TABLE_SKIPPABLE: Final = frozenset({BlockKind.PARAGRAPH, BlockKind.IMAGE})
+# When an image occurs, two paragraphs across the entire title-to-table gap
+# cover the usual period/unit caption pair. A third is narrative drift, so a
+# later unrelated table cannot be claimed by the title.
+_MAX_PARAGRAPHS_WITH_IMAGE: Final = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,46 +110,37 @@ def build_document(
     sections: list[DocumentSection] = []
     current_title = "본문"
     current_blocks: list[DocumentBlock] = []
-    for block in blocks:
-        inferred_title = _infer_table_title(block)
+    seen_kinds: set[SectionKind] = set()
+    ordered = tuple(blocks)
+    for position, block in enumerate(ordered):
+        within_note = classify_section(current_title) is SectionKind.NOTE
+        inferred_title = _infer_section_title(block, ordered, position + 1)
         if (
             inferred_title is not None
             and current_blocks
+            and not _stays_inside_note(
+                inferred_title, seen_kinds, within_note=within_note
+            )
             and (
                 classify_section(current_title) is SectionKind.OTHER
                 or classify_section(inferred_title)
                 is not classify_section(current_title)
             )
         ):
-            sections.append(
-                DocumentSection(
-                    title=current_title,
-                    kind=classify_section(current_title),
-                    blocks=tuple(current_blocks),
-                )
-            )
+            _close_section(sections, seen_kinds, current_title, current_blocks)
             current_blocks = []
             current_title = inferred_title
-        if block.kind is BlockKind.HEADING and block.text.strip() and current_blocks:
-            sections.append(
-                DocumentSection(
-                    title=current_title,
-                    kind=classify_section(current_title),
-                    blocks=tuple(current_blocks),
-                )
-            )
-            current_blocks = []
-        if block.kind is BlockKind.HEADING and block.text.strip():
-            current_title = block.text.strip()
+        heading_title = _section_heading_title(
+            block, seen_kinds, within_note=within_note
+        )
+        if heading_title is not None:
+            if current_blocks:
+                _close_section(sections, seen_kinds, current_title, current_blocks)
+                current_blocks = []
+            current_title = heading_title
         current_blocks.append(block)
     if current_blocks:
-        sections.append(
-            DocumentSection(
-                title=current_title,
-                kind=classify_section(current_title),
-                blocks=tuple(current_blocks),
-            )
-        )
+        _close_section(sections, seen_kinds, current_title, current_blocks)
     sections = _split_note_sections(sections)
     return ParsedDocument(
         sections=tuple(sections),
@@ -154,43 +153,105 @@ def build_document(
 
 def classify_section(title: str) -> SectionKind:
     """Classify a section by stable DART report terminology."""
-    compact_title = "".join(title.split())
-    if "재무상태표" in compact_title:
-        return SectionKind.BALANCE_SHEET
-    if "손익" in compact_title or "포괄손익" in compact_title:
-        return SectionKind.INCOME
-    if "자본변동" in compact_title:
-        return SectionKind.EQUITY
-    if "현금흐름" in compact_title:
-        return SectionKind.CASH_FLOW
-    if "주석" in compact_title:
-        return SectionKind.NOTE
-    if (
-        "감사의견" in compact_title
-        or "검토의견" in compact_title
-        or "감사보고서" in compact_title
-    ):
-        return SectionKind.OPINION
-    return SectionKind.OTHER
+    return classify(title)
 
 
-def _infer_table_title(block: DocumentBlock) -> str | None:
-    if block.kind is not BlockKind.TABLE:
-        return None
-    candidates = (
-        "재무상태표",
-        "손익 및 포괄손익계산서",
-        "손익계산서",
-        "포괄손익계산서",
-        "자본변동표",
-        "현금흐름표",
+def _close_section(
+    sections: list[DocumentSection],
+    seen_kinds: set[SectionKind],
+    title: str,
+    blocks: list[DocumentBlock],
+) -> None:
+    """Append a finished section and record kinds that carry a real table.
+
+    Only table-bearing sections count, matching what core-statement checks
+    require, so a title alone can never mask a statement that is still coming.
+    """
+    section = DocumentSection(
+        title=title,
+        kind=classify_section(title),
+        blocks=tuple(blocks),
     )
-    for row in block.rows[:3]:
-        text = "".join(" ".join(row).split())
-        for candidate in candidates:
-            if candidate in text:
-                return candidate
-    return None
+    sections.append(section)
+    if any(block.kind is BlockKind.TABLE for block in section.blocks):
+        seen_kinds.add(section.kind)
+
+
+def _stays_inside_note(
+    title: str,
+    seen_kinds: set[SectionKind],
+    *,
+    within_note: bool,
+) -> bool:
+    """Whether a statement title repeats inside a note instead of opening a sheet.
+
+    Suppression needs an earlier section of the same kind that already holds a
+    table, so it can never hide a core statement; only a later repeat inside a
+    note is folded back into that note.
+    """
+    kind = classify_section(title)
+    return within_note and kind in statement_kinds and kind in seen_kinds
+
+
+def _section_heading_title(
+    block: DocumentBlock,
+    seen_kinds: set[SectionKind],
+    *,
+    within_note: bool,
+) -> str | None:
+    """Return the title a heading starts, or None when it stays inside a note."""
+    if block.kind is not BlockKind.HEADING:
+        return None
+    title = block.text.strip()
+    if not title or _stays_inside_note(title, seen_kinds, within_note=within_note):
+        return None
+    return title
+
+
+def _infer_section_title(
+    block: DocumentBlock,
+    ordered: Sequence[DocumentBlock],
+    next_position: int,
+) -> str | None:
+    """Return the statement a table header or a standalone title line announces."""
+    if block.kind is BlockKind.TABLE:
+        return _title_from_rows(block.rows)
+    if block.kind is not BlockKind.PARAGRAPH:
+        return None
+    title = statement_title_of_line(block.text)
+    if title is None or not _announces_table(ordered, next_position):
+        return None
+    return title
+
+
+def _announces_table(ordered: Sequence[DocumentBlock], start: int) -> bool:
+    """Whether a title line is followed by the statement table it names.
+
+    Blank lines and caption lines such as the period, the company, or the unit
+    may sit in between. Another title line means the document is listing
+    statements, as a table of contents does, and names no table.
+    """
+    skipped_image = False
+    paragraph_gap = 0
+    for position in range(start, len(ordered)):
+        block = ordered[position]
+        if block.kind not in _TITLE_TO_TABLE_SKIPPABLE:
+            return block.kind is BlockKind.TABLE
+        if block.kind is BlockKind.IMAGE:
+            skipped_image = True
+            if paragraph_gap > _MAX_PARAGRAPHS_WITH_IMAGE:
+                return False
+            continue
+        if statement_title_of_line(block.text) is not None:
+            return False
+        paragraph_gap += 1
+        if skipped_image and paragraph_gap > _MAX_PARAGRAPHS_WITH_IMAGE:
+            return False
+    return False
+
+
+def _title_from_rows(rows: tuple[tuple[str, ...], ...]) -> str | None:
+    return statement_title_in_rows(rows)
 
 
 def _split_note_sections(

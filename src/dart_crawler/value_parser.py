@@ -38,17 +38,26 @@ def parse_cell_value(text: str, *, unit_multiplier: int = 1) -> int | float | st
 
 
 def thousands_number_format(text: str) -> str | None:
-    """Return the display format that keeps source thousands separators."""
+    """Return a format preserving source grouping and parenthesized negatives."""
     normalized = text.strip()
-    if "," not in normalized:
-        return None
     match = _NUMBER.fullmatch(normalized)
     if match is None:
         return None
+    parenthesized = normalized.startswith("(") and normalized.endswith(")")
+    has_thousands_separator = "," in normalized
+    if not has_thousands_separator and not parenthesized:
+        return None
     decimals = match.group("decimals")
-    if decimals is None:
-        return "#,##0"
-    return "#,##0." + "0" * len(decimals)
+    # Ungrouped sources use "0" so parentheses do not introduce absent commas.
+    integer_format = "#,##0" if has_thousands_separator else "0"
+    number_format = (
+        integer_format
+        if decimals is None
+        else integer_format + "." + "0" * len(decimals)
+    )
+    if parenthesized:
+        return f"{number_format};({number_format})"
+    return number_format
 
 
 def _safe_text(value: str) -> str:

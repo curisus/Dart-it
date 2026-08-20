@@ -9,6 +9,7 @@ from html.parser import HTMLParser
 from typing import Final, assert_never
 
 from dart_crawler.document_model import BlockKind, DocumentBlock, SourceCoverage
+from dart_crawler.text_segmentation import split_source_tokens
 
 TABLE_CELL_TAGS: Final = frozenset({"td", "th", "te", "tu", "cell"})
 IMAGE_TAGS: Final = frozenset({"img", "image"})
@@ -81,7 +82,7 @@ class _SourceScanner(HTMLParser):
             return
         if self._in_image_container and self._image_content_depth == 0:
             return
-        self.text_tokens.extend(data.split())
+        self.text_tokens.extend(split_source_tokens(data))
 
     def unknown_decl(self, data: str) -> None:
         content = cdata_content(data)
@@ -137,12 +138,12 @@ def build_source_coverage(
     for block in blocks:
         match block.kind:
             case BlockKind.HEADING | BlockKind.PARAGRAPH:
-                captured_tokens.extend(block.text.split())
+                captured_tokens.extend(split_source_tokens(block.text))
             case BlockKind.TABLE:
                 captured_table_count += 1
                 for row in block.rows:
                     for value in row:
-                        captured_tokens.extend(value.split())
+                        captured_tokens.extend(split_source_tokens(value))
             case BlockKind.IMAGE:
                 captured_image_count += 1
             case unreachable:

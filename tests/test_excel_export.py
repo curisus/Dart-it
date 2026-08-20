@@ -5,6 +5,7 @@ import pytest
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 
+from dart_crawler import workbook_layout
 from dart_crawler.document_model import ParsedDocument
 from dart_crawler.document_validation import validate_document
 from dart_crawler.excel_export import ExcelExportService, ExportContext
@@ -52,6 +53,7 @@ def _context(document: ParsedDocument) -> ExportContext:
         report_title="감사보고서",
         receipt_date="20260310",
         rcept_no="20260310002820",
+        source_rcept_no="20260310002820",
         attachment_id="opendart:20260310002820:audit.xml",
         correction_chain=("20260310002820",),
         source_url="https://dart.example/report",
@@ -89,7 +91,7 @@ def test_value_parser_accepts_grouped_thousands_numbers() -> None:
 
 def test_thousands_number_format_follows_source_commas() -> None:
     assert thousands_number_format("1,234") == "#,##0"
-    assert thousands_number_format("(112,071)") == "#,##0"
+    assert thousands_number_format("(112,071)") == "#,##0;(#,##0)"
     assert thousands_number_format("   1,000") == "#,##0"
     assert thousands_number_format("1,234.56") == "#,##0.00"
     assert thousands_number_format("1,234.5") == "#,##0.0"
@@ -97,6 +99,49 @@ def test_thousands_number_format_follows_source_commas() -> None:
     assert thousands_number_format("26,34") is None
     assert thousands_number_format("합계") is None
     assert thousands_number_format("") is None
+
+
+@pytest.mark.parametrize(
+    ("source_text", "expected_format"),
+    [
+        ("(112,071)", "#,##0;(#,##0)"),
+        ("(1,234.56)", "#,##0.00;(#,##0.00)"),
+        ("-112,071", "#,##0"),
+        ("1,234", "#,##0"),
+        ("1,234.5", "#,##0.0"),
+        ("(352)", "0;(0)"),
+        ("(12.5)", "0.0;(0.0)"),
+        ("352", None),
+    ],
+)
+def test_thousands_number_format_keeps_source_parentheses(
+    source_text: str,
+    expected_format: str | None,
+) -> None:
+    actual = thousands_number_format(source_text)
+
+    assert actual == expected_format
+
+
+@pytest.mark.parametrize(
+    ("value", "number_format", "expected_display"),
+    [
+        (-112071, "#,##0;(#,##0)", "(112,071)"),
+        (-1234.56, "#,##0.00;(#,##0.00)", "(1,234.56)"),
+        (112071, "#,##0;(#,##0)", "112,071"),
+        (-112071, "#,##0", "-112,071"),
+        (-352, "0;(0)", "(352)"),
+        (-12.5, "0.0;(0.0)", "(12.5)"),
+    ],
+)
+def test_column_width_accounts_for_parenthesized_negative_display(
+    value: float,
+    number_format: str,
+    expected_display: str,
+) -> None:
+    actual = workbook_layout._display_text(value, number_format)
+
+    assert actual == expected_display
 
 
 def test_value_parser_preserves_leading_indentation_for_text() -> None:
@@ -171,7 +216,7 @@ def test_export_applies_thousands_display_format(tmp_path: Path) -> None:
     assert sheet["B2"].value == 1234567
     assert sheet["B2"].number_format == "#,##0"
     assert sheet["B3"].value == -112071
-    assert sheet["B3"].number_format == "#,##0"
+    assert sheet["B3"].number_format == "#,##0;(#,##0)"
     assert sheet["B4"].value == "26,34"
     assert sheet["B4"].number_format == "General"
     assert sheet["B5"].value == 352
@@ -183,6 +228,9 @@ def test_export_applies_thousands_display_format(tmp_path: Path) -> None:
     assert sheet["B8"].value == 9876543
     assert sheet["B8"].number_format == "#,##0"
     assert "B8:C9" in {str(item) for item in sheet.merged_cells.ranges}
+    income_statement = workbook["손익 및 포괄손익계산서"]
+    assert income_statement["B2"].value == -10
+    assert income_statement["B2"].number_format == "0;(0)"
     workbook.close()
 
 

@@ -111,7 +111,7 @@ def _coverage_failure(issue: str, **counts: int) -> Result[ValidationSummary]:
     return Result.failure(
         error_info(
             ErrorCode.VALIDATION_FAILED,
-            "DART 원문의 수집 대상 항목이 모두 반영되지 않아 엑셀을 만들지 않았습니다.",
+            "DART 원문의 수집 대상 항목이 모두 반영되지 않아 결과를 반환하지 않았습니다.",
             retryable=False,
             details={"issue": issue, **counts},
         ),
@@ -127,7 +127,7 @@ def _document_failure(
     return Result.failure(
         error_info(
             ErrorCode.VALIDATION_FAILED,
-            "원문 표 구조 검증에 실패하여 엑셀을 만들지 않았습니다.",
+            "원문 표 구조 검증에 실패하여 결과를 반환하지 않았습니다.",
             retryable=False,
             details={
                 "issue": issue,

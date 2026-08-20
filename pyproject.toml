@@ -32,6 +32,9 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.vercel]
+entrypoint = "api.mcp:app"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/dart_crawler"]
 
@@ -84,6 +87,12 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "ARG", "PLR2004", "SLF001", "D"]
+# Vercel deploys every file under api/ as its own function, so the directory
+# must stay a plain folder: an __init__.py would be deployed as a function too.
+"api/*.py" = ["INP001"]
+# Standalone validation entry points, run by hand rather than imported: their
+# product is the evidence they print, so stdout is the output channel.
+"scripts/*.py" = ["INP001", "T201"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

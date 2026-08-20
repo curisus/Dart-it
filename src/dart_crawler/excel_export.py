@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from dart_crawler.document_model import BlockKind, ParsedDocument, SectionKind
+from dart_crawler.document_model import BlockKind, ParsedDocument
 from dart_crawler.document_validation import validate_document
 from dart_crawler.output_file import (
     matching_existing_file,
@@ -21,6 +21,7 @@ from dart_crawler.result import (
     WarningInfo,
     error_info,
 )
+from dart_crawler.section_models import missing_core_sections
 from dart_crawler.workbook_validation import validate_workbook
 from dart_crawler.workbook_writer import write_workbook
 
@@ -50,6 +51,7 @@ class ExportContext(BaseModel):
     report_title: str
     receipt_date: str
     rcept_no: str
+    source_rcept_no: str
     attachment_id: str
     correction_chain: tuple[str, ...]
     source_url: str
@@ -95,7 +97,7 @@ class ExcelExportService:
                 next_action=document_validation.next_action,
             )
         validation_summary = document_validation.data
-        missing = _missing_core_sections(context.document)
+        missing = missing_core_sections(context.document)
         if missing:
             return Result.failure(
                 error_info(
@@ -144,12 +146,14 @@ class ExcelExportService:
                 )
             )
         reused = matching_existing_file(output_path, context)
+        # Reuse alone tolerates a pre-change legacy workbook without the new row.
         existing_validation = (
             validate_workbook(
                 output_path,
                 context,
                 collection_status=status.value,
                 summary=validation_summary,
+                allow_legacy_source_receipt_omission=True,
             )
             if reused
             else None
@@ -186,11 +190,13 @@ class ExcelExportService:
                     details={"reason": str(exc)},
                 )
             )
+        # A newly written workbook must always contain source_rcept_no.
         workbook_validation = validate_workbook(
             output_path,
             context,
             collection_status=status.value,
             summary=validation_summary,
+            allow_legacy_source_receipt_omission=False,
         )
         if not workbook_validation.ok:
             try:
@@ -236,22 +242,3 @@ class ExcelExportService:
             f"{context.receipt_date}{partial_suffix}.xlsx"
         )
         return self._output_dir / safe_filename(filename)
-
-
-def _missing_core_sections(document: ParsedDocument) -> tuple[str, ...]:
-    labels = {
-        SectionKind.BALANCE_SHEET: "재무상태표",
-        SectionKind.INCOME: "손익·포괄손익",
-        SectionKind.EQUITY: "자본변동표",
-        SectionKind.CASH_FLOW: "현금흐름표",
-    }
-    missing = []
-    for kind, label in labels.items():
-        sections = [section for section in document.sections if section.kind is kind]
-        if not sections or not any(
-            block.kind is BlockKind.TABLE
-            for section in sections
-            for block in section.blocks
-        ):
-            missing.append(label)
-    return tuple(missing)

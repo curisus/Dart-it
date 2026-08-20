@@ -13,6 +13,7 @@ from dart_crawler.document_model import (
 )
 from dart_crawler.document_validation import validate_document
 from dart_crawler.html_parser import parse_html_document
+from dart_crawler.result import ErrorCode
 from dart_crawler.workbook_layout import apply_workbook_layout
 from dart_crawler.workbook_validation import validate_workbook
 
@@ -20,6 +21,7 @@ from dart_crawler.workbook_validation import validate_workbook
 @dataclass(frozen=True, slots=True)
 class _ValidationContext:
     rcept_no: str
+    source_rcept_no: str
     attachment_id: str
     document: ParsedDocument
 
@@ -141,6 +143,7 @@ def test_validate_workbook_rejects_formula_in_metadata_sheet(tmp_path: Path) -> 
     assert validation.data is not None
     context = _ValidationContext(
         rcept_no="20260310000001",
+        source_rcept_no="20260310000001",
         attachment_id="opendart:20260310000001:audit.xml",
         document=parsed.data,
     )
@@ -149,6 +152,7 @@ def test_validate_workbook_rejects_formula_in_metadata_sheet(tmp_path: Path) -> 
     metadata = workbook.worksheets[0]
     metadata.title = "수집정보"
     metadata.append(("rcept_no", context.rcept_no))
+    metadata.append(("source_rcept_no", context.source_rcept_no))
     metadata.append(("evil", "=1+1"))
     content = workbook.create_sheet("Header")
     content["A1"] = "Header"
@@ -164,7 +168,9 @@ def test_validate_workbook_rejects_formula_in_metadata_sheet(tmp_path: Path) -> 
     )
 
     assert result.ok is False
+    assert result.data is None
     assert result.error is not None
+    assert result.error.code is ErrorCode.VALIDATION_FAILED
     assert result.error.details["issue"] == "formula_cell_detected"
     assert result.error.details["sheet"] == "수집정보"
 
@@ -178,6 +184,7 @@ def test_validate_workbook_rejects_missing_final_expected_cell(tmp_path: Path) -
     assert validation.data is not None
     context = _ValidationContext(
         rcept_no="20260310000001",
+        source_rcept_no="20260310000001",
         attachment_id="opendart:20260310000001:audit.xml",
         document=parsed.data,
     )
@@ -187,6 +194,7 @@ def test_validate_workbook_rejects_missing_final_expected_cell(tmp_path: Path) -
     metadata.title = "수집정보"
     metadata_rows = {
         "rcept_no": context.rcept_no,
+        "source_rcept_no": context.source_rcept_no,
         "attachment_id": context.attachment_id,
         "source_sha256": context.document.source_sha256,
         "collection_status": "complete",

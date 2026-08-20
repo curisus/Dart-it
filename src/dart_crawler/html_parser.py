@@ -23,6 +23,7 @@ from dart_crawler.source_coverage import (
     scan_source,
 )
 from dart_crawler.table_layout import TableCell, layout_table
+from dart_crawler.text_segmentation import split_item_rows
 
 _HEADING_TAGS: Final = frozenset(
     {"heading", "title", "h1", "h2", "h3", "h4", "h5", "h6"}
@@ -104,22 +105,25 @@ class _HtmlBlockParser(HTMLParser):
                 )
             return
         if self._text_tag == normalized:
-            text = _clean(self._text_parts)
-            if text:
-                kind = (
-                    BlockKind.HEADING
-                    if normalized in _HEADING_TAGS
-                    else BlockKind.PARAGRAPH
-                )
-                self.blocks.append(DocumentBlock(kind, text=text))
-            elif (
-                self.blocks
-                and not self._table_depth
-                and len(self.blocks) == self._text_tag_block_count
-            ):
-                self.blocks.append(DocumentBlock(BlockKind.PARAGRAPH, text=""))
-            self._text_tag = None
-            self._text_parts = []
+            self._end_text_tag(normalized)
+
+    def _end_text_tag(self, normalized: str) -> None:
+        text = _clean(self._text_parts)
+        if text and normalized in _HEADING_TAGS:
+            self.blocks.append(DocumentBlock(BlockKind.HEADING, text=text))
+        elif text:
+            self.blocks.extend(
+                DocumentBlock(BlockKind.PARAGRAPH, text=row)
+                for row in split_item_rows(text)
+            )
+        elif (
+            self.blocks
+            and not self._table_depth
+            and len(self.blocks) == self._text_tag_block_count
+        ):
+            self.blocks.append(DocumentBlock(BlockKind.PARAGRAPH, text=""))
+        self._text_tag = None
+        self._text_parts = []
 
     def handle_data(self, data: str) -> None:
         if self._non_display_depth or self._image_file_depth:
