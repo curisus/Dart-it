@@ -2,6 +2,8 @@
 
 DART의 감사보고서와 검토보고서를 찾아 원문 첨부문서에서 검색·계산 가능한 Excel 파일을 만드는 로컬 MCP 서버입니다. 서버는 사용자 컴퓨터에서 `stdio` 방식으로 실행되며 요청 사이에 회사나 보고서 선택 상태를 저장하지 않습니다.
 
+같은 수집 엔진을 설치 없이 쓸 수 있는 [원격 MCP 서버](#원격-mcp-서버-vercel)도 Vercel에 배포되어 있습니다. 원격 서버는 Excel 파일 대신 보고서 데이터를 그대로 반환합니다.
+
 ## 지원 범위
 
 - Python 3.13
@@ -62,6 +64,46 @@ uv run dart-crawler-mcp
 4. `export_report_excel(rcept_no, attachment_id)`로 수집·검증·생성합니다. 결과에는 출력 경로, 전체·부분수집 상태, 기존 파일 재사용 여부, 경고가 포함됩니다.
 
 모든 도구는 `ok`, 성공 시 `data`, 실패 시 `error { code, message, retryable, details }`, `warnings`, `next_action` 구조를 사용합니다. API 키나 비밀번호는 오류 내용에 넣지 않습니다.
+
+## 원격 MCP 서버 (Vercel)
+
+설치 없이 사용할 수 있는 원격 서버가 Vercel의 Linux 환경에 배포되어 있습니다.
+
+- 주소: `https://dart-mcp-remote.vercel.app/api/mcp`
+- 인증: 요청 헤더로 본인의 OpenDART API 키를 전달합니다. 서버는 키를 저장하지 않으며, 키 없이 도구를 호출하면 `CONFIG_ERROR`로 거부합니다. 서버 연결과 도구 목록 확인은 키 없이도 됩니다.
+  - 기본: `X-OpenDART-API-Key: 발급받은_키`
+  - 대체: `Authorization: Bearer 발급받은_키`
+- 도구: `search_companies`, `list_report_filings`, `list_report_attachments`, `list_report_sections`, `get_report_sections` 5개 (조회 전용)
+- Excel 파일 생성(`export_report_excel`)은 원격 서버가 파일을 저장할 위치가 없어 제공하지 않습니다. 로컬 서버에서만 가능합니다.
+
+### Claude for Excel에서 사용하기
+
+Claude for Excel(Excel 안에서 Claude를 쓰는 추가 기능)은 claude.ai 계정에 등록한 커넥터를 그대로 사용합니다. 아래 절차로 한 번만 등록하면 Excel 사이드바에서 DART 데이터를 바로 조회할 수 있습니다.
+
+1. [claude.ai](https://claude.ai) 접속 → 설정 → **Connectors** → **Add custom connector**
+2. URL 칸에 `https://dart-mcp-remote.vercel.app/api/mcp` 입력
+3. **Request headers** 항목을 열고 헤더를 추가합니다.
+   - 이름: `Authorization`
+   - 값: `Bearer 발급받은_키` — `Bearer` 뒤 공백 하나를 포함해 그대로 입력합니다. 키는 [OpenDART](https://opendart.fss.or.kr/)에서 발급받습니다.
+4. **Add**를 눌러 저장합니다. 저장한 키 값은 다시 표시되지 않습니다.
+5. Excel에서 Claude 사이드바를 열고, 대화 입력창의 **+** 버튼 → **Connectors**에서 방금 등록한 커넥터를 켭니다.
+6. 예를 들어 "삼성전자 2025 사업보고서의 재무상태표를 가져와 시트에 정리해줘"라고 요청하면 Claude가 아래 원격 도구 사용 순서대로 호출해 데이터를 가져옵니다.
+
+주의: Request headers 기능은 베타라서 계정에 따라 아직 보이지 않을 수 있습니다. 이 항목 없이 커넥터만 등록하면 서버 연결과 도구 목록 확인까지는 되지만, 실제 조회는 키가 없어 `CONFIG_ERROR`로 거부됩니다. claude.ai 웹과 Claude Desktop에서도 같은 절차로 사용할 수 있습니다.
+
+### Claude Code에서 원격 서버 등록
+
+```powershell
+claude mcp add --transport http --scope user dart_remote https://dart-mcp-remote.vercel.app/api/mcp --header "X-OpenDART-API-Key: 발급받은_키"
+```
+
+이 명령은 키를 사용자 설정 파일에 평문으로 저장하고 명령어 기록에도 남으므로 본인 컴퓨터에서만 사용하세요.
+
+### 원격 도구 사용 순서
+
+1. `search_companies`, `list_report_filings`, `list_report_attachments`는 로컬과 동일하게 사용합니다.
+2. `list_report_sections(rcept_no, attachment_id)`로 첨부문서의 목차를 확인합니다. 섹션마다 `section_id`, 제목, 종류(`kind`), 표 셀 수, 이미지 포함 여부가 표시되고 내용은 포함되지 않습니다. 이미지 전용 구역은 OCR하지 않으므로 내용이 비어 있을 수 있습니다.
+3. `get_report_sections(rcept_no, attachment_id, section_ids, section_kinds)`로 선택한 섹션의 내용을 받습니다. `section_ids`(목차의 id), `section_kinds`(예: `balance_sheet`, `note`) 중 하나 이상을 지정하며, `section_kinds`에 `statements`를 주면 재무상태표·손익(포괄손익)계산서·자본변동표·현금흐름표 네 가지 종류의 재무제표 구역을 한 번에 받습니다. 한 번에 받을 수 있는 분량에는 한도가 있으며, 넘으면 일부만 주는 대신 요청을 나누라는 안내와 함께 거부합니다.
 
 ## 출력 파일
 
