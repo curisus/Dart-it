@@ -44,7 +44,9 @@ class FinancialAccount(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    fs_div: str
+    # fnlttSinglAcntAll rows do not echo the fs_div request parameter,
+    # so the field must stay optional or every real payload fails to parse.
+    fs_div: str = ""
     sj_div: str
     bsns_year: str
     reprt_code: str
