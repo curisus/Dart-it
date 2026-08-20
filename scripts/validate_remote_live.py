@@ -667,7 +667,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     recorder.facts["tool_names"] = list(tool_names)
     recorder.record(
         "tools/list surface",
-        passed=len(tool_names) == 9 and "export_report_excel" not in tool_names,
+        passed=len(tool_names) == 11 and "export_report_excel" not in tool_names,
         detail=f"{len(tool_names)}개: {', '.join(tool_names)}",
     )
 
@@ -803,6 +803,8 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     _run_official_check(recorder, api_key, corp_code, business_year, statement_sections)
     _run_financial_data_tools_check(client, recorder, api_key, corp_code, business_year)
     _run_report_topics_check(client, recorder, corp_code, business_year)
+    _run_company_profile_check(client, recorder, corp_code)
+    _run_ownership_reports_check(client, recorder, corp_code)
 
 
 def _run_negative_cases(
@@ -1117,6 +1119,93 @@ def _run_report_topics_check(
             "[WARN] get_report_topics(audit_opinion) row_count=0 for "
             f"corp_code={corp_code} bsns_year={business_year} — "
             "사업보고서 감사의견 데이터가 비어 있습니다."
+        )
+
+
+def _run_company_profile_check(
+    client: RemoteClient,
+    recorder: Recorder,
+    corp_code: str,
+) -> None:
+    """Smoke-test get_company_profile for the script's default company.
+
+    corp_name is asserted non-empty (a hard requirement for any real
+    company); every other field is recorded rather than required, since
+    company.json legitimately leaves optional fields blank for some issuers.
+    """
+    profile = _as_object(
+        _data(
+            client.call(
+                "get_company_profile",
+                {"corp_code": corp_code},
+                label="get_company_profile",
+            ),
+            "get_company_profile",
+        ),
+        "CompanyProfileData",
+    )
+    recorder.facts["get_company_profile"] = {
+        key: profile.get(key)
+        for key in (
+            "corp_code",
+            "corp_name",
+            "corp_name_eng",
+            "stock_name",
+            "stock_code",
+            "ceo_nm",
+            "corp_cls",
+            "est_dt",
+            "acc_mt",
+        )
+    }
+    corp_name = profile.get("corp_name")
+    recorder.record(
+        "get_company_profile corp_name",
+        passed=isinstance(corp_name, str) and bool(corp_name),
+        detail=f"corp_code={corp_code} corp_name={corp_name!r}",
+    )
+
+
+def _run_ownership_reports_check(
+    client: RemoteClient,
+    recorder: Recorder,
+    corp_code: str,
+) -> None:
+    """Smoke-test get_ownership_reports(major_holding) for the default company.
+
+    Row presence legitimately varies by company, so row_count is recorded
+    rather than required (see the get_financial_indicators and
+    get_report_topics checks for the same pattern); only the envelope shape
+    is asserted.
+    """
+    report = _as_object(
+        _data(
+            client.call(
+                "get_ownership_reports",
+                {"corp_code": corp_code, "report_type": "major_holding"},
+                label="get_ownership_reports(major_holding)",
+            ),
+            "get_ownership_reports(major_holding)",
+        ),
+        "OwnershipReportData",
+    )
+    row_count = _as_int(report.get("returned_row_count"), "returned_row_count")
+    recorder.facts["get_ownership_reports"] = {
+        "report_type": report.get("report_type"),
+        "label": report.get("label"),
+        "returned_row_count": row_count,
+    }
+    recorder.record(
+        "get_ownership_reports(major_holding) 응답 봉투 파싱",
+        passed=report.get("report_type") == "major_holding"
+        and isinstance(report.get("label"), str)
+        and bool(report.get("label")),
+        detail=f"report_type=major_holding label={report.get('label')!r} row_count={row_count}",
+    )
+    if row_count < 1:
+        print(
+            "[WARN] get_ownership_reports(major_holding) row_count=0 for "
+            f"corp_code={corp_code} — 대량보유 상황보고 데이터가 비어 있습니다."
         )
 
 

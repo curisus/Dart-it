@@ -117,3 +117,34 @@ class FinancialIndexRow(BaseModel):
     idx_cl_nm: str = ""
     idx_nm: str = ""
     idx_val: str = ""
+
+
+class CompanyProfile(BaseModel):
+    """OpenDART DS001 company master-data envelope (company.json).
+
+    Unlike the row endpoints, company.json returns its payload fields at the
+    top level beside status/message rather than under a `list`, so it does
+    not fit the DartRowsResponse shape.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    status: str
+    message: str
+    corp_code: str = ""
+    corp_name: str = ""
+    corp_name_eng: str = ""
+    stock_name: str = ""
+    stock_code: str = ""
+    ceo_nm: str = ""
+    corp_cls: str = ""
+    jurir_no: str = ""
+    bizr_no: str = ""
+    adres: str = ""
+    hm_url: str = ""
+    ir_url: str = ""
+    phn_no: str = ""
+    fax_no: str = ""
+    induty_code: str = ""
+    est_dt: str = ""
+    acc_mt: str = ""

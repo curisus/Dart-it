@@ -14,6 +14,7 @@ from defusedxml.common import DefusedXmlException
 from pydantic import ValidationError
 
 from dart_crawler.api_models import (
+    CompanyProfile,
     DartListResponse,
     DartListRow,
     DartRowsResponse,
@@ -34,12 +35,14 @@ _MAJOR_ACCOUNT_SINGLE_URL = f"{_OPEN_DART_BASE}/fnlttSinglAcnt.json"
 _MAJOR_ACCOUNT_MULTI_URL = f"{_OPEN_DART_BASE}/fnlttMultiAcnt.json"
 _FINANCIAL_INDEX_SINGLE_URL = f"{_OPEN_DART_BASE}/fnlttSinglIndx.json"
 _FINANCIAL_INDEX_MULTI_URL = f"{_OPEN_DART_BASE}/fnlttCmpnyIndx.json"
+_COMPANY_URL = f"{_OPEN_DART_BASE}/company.json"
 _VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do"
 _VIEWER_DOCUMENT_URL = "https://dart.fss.or.kr/report/viewer.do"
 
-# The registry (domains/report_topics.py) owns the set of valid endpoint
-# names; this only guards against a malformed string reaching URL assembly.
-_REPORT_TOPIC_ENDPOINT_PATTERN: Final = re.compile(r"^[A-Za-z]+$", re.ASCII)
+# The registries (domains/report_topics.py, domains/ownership.py) own the
+# set of valid endpoint names; this only guards against a malformed string
+# reaching URL assembly.
+_ENDPOINT_NAME_PATTERN: Final = re.compile(r"^[A-Za-z]+$", re.ASCII)
 
 _DART_STATUS_ERRORS: Final[Mapping[str, tuple[ErrorCode, bool, str]]] = {
     "010": (ErrorCode.UPSTREAM_AUTH, False, "OpenDART API 키가 등록되지 않았습니다."),
@@ -308,7 +311,7 @@ class DartApi:
         report_code: str,
     ) -> Result[tuple[JsonObject, ...]]:
         """Fetch DS002 regular-report key-information rows for one topic."""
-        if _REPORT_TOPIC_ENDPOINT_PATTERN.match(endpoint) is None:
+        if _ENDPOINT_NAME_PATTERN.match(endpoint) is None:
             return Result.failure(
                 error_info(
                     ErrorCode.INVALID_INPUT,
@@ -329,6 +332,62 @@ class DartApi:
             parse_failure_message=(
                 "OpenDART 정기보고서 주요정보 응답 형식을 해석할 수 없습니다."
             ),
+        )
+
+    def fetch_company_profile(self, corp_code: str) -> Result[CompanyProfile]:
+        """Fetch OpenDART DS001 company master data (company.json) for one company.
+
+        company.json returns its payload fields at the top level beside
+        status/message rather than under a `list`, so this does not go
+        through the shared `_fetch_rows` rows-envelope path.
+        """
+        response = self._get_json(_COMPANY_URL, {"corp_code": corp_code})
+        if not response.ok or response.data is None:
+            return Result.failure(
+                response.error
+                if response.error is not None
+                else error_info(
+                    ErrorCode.UPSTREAM_UNAVAILABLE,
+                    "OpenDART 기업개황을 수집할 수 없습니다.",
+                    retryable=True,
+                ),
+                warnings=response.warnings,
+            )
+        try:
+            parsed = CompanyProfile.model_validate_json(response.data.content)
+        except ValidationError:
+            return Result.failure(
+                error_info(
+                    ErrorCode.PARSE_FAILED,
+                    "OpenDART 기업개황 응답 형식을 해석할 수 없습니다.",
+                    retryable=False,
+                )
+            )
+        if parsed.status != "000":
+            return Result.failure(_dart_status_error(parsed.status))
+        return Result.success(parsed)
+
+    def fetch_ownership_rows(
+        self,
+        endpoint: str,
+        corp_code: str,
+    ) -> Result[tuple[JsonObject, ...]]:
+        """Fetch DS004 ownership-disclosure rows (majorstock/elestock) for one company."""
+        if _ENDPOINT_NAME_PATTERN.match(endpoint) is None:
+            return Result.failure(
+                error_info(
+                    ErrorCode.INVALID_INPUT,
+                    "지분공시 endpoint 형식이 올바르지 않습니다.",
+                    retryable=False,
+                    details={"endpoint": endpoint},
+                )
+            )
+        return self._fetch_rows(
+            f"{_OPEN_DART_BASE}/{endpoint}.json",
+            {"corp_code": corp_code},
+            DartRowsResponse[JsonObject],
+            unavailable_message="OpenDART 지분공시 정보를 수집할 수 없습니다.",
+            parse_failure_message="OpenDART 지분공시 정보 응답 형식을 해석할 수 없습니다.",
         )
 
     def _fetch_rows[RowT](
