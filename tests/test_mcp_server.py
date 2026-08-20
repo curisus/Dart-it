@@ -32,6 +32,7 @@ async def test_mcp_registers_the_local_superset_and_returns_result_envelope(
         "get_financial_indicators",
         "get_report_topics",
         "export_report_excel",
+        "export_report_markdown",
     }
 
     result = await mcp.call_tool(
