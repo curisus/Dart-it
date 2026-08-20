@@ -33,6 +33,7 @@ async def test_mcp_registers_the_local_superset_and_returns_result_envelope(
         "get_report_topics",
         "get_company_profile",
         "get_ownership_reports",
+        "get_material_events",
         "export_report_excel",
         "export_report_markdown",
     }

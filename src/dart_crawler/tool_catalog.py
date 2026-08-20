@@ -26,6 +26,7 @@ from dart_crawler.domains.financials import (
     FinancialStatementData,
     MajorAccountData,
 )
+from dart_crawler.domains.material_events import MaterialEventData
 from dart_crawler.domains.ownership import OwnershipReportData
 from dart_crawler.domains.report_topics import ReportTopicData
 from dart_crawler.excel_export import ExportedFile
@@ -54,7 +55,7 @@ class ServiceRunner(Protocol):
 
 
 def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
-    """Register the eleven read-only query tools shared by every surface.
+    """Register the twelve read-only query tools shared by every surface.
 
     Split into three grouped helpers purely to stay under the mccabe
     complexity limit (each nested ``@mcp.tool()`` definition counts as one
@@ -236,7 +237,7 @@ def _register_financial_tools(mcp: MCPServer, run: ServiceRunner) -> None:
 
 
 def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
-    """Register the DS002/DS001/DS004 topic, profile, and ownership tools."""
+    """Register the DS002/DS001/DS004/DS005 topic, profile, ownership, and event tools."""
 
     @mcp.tool()
     def get_report_topics(
@@ -328,6 +329,54 @@ def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
             ctx,
             lambda service: service.get_ownership_reports(
                 corp_code, report_type, bgn_de, end_de
+            ),
+        )
+
+    @mcp.tool()
+    def get_material_events(
+        corp_code: str,
+        event_types: tuple[str, ...],
+        bgn_de: str,
+        end_de: str,
+        ctx: Context,
+    ) -> Result[MaterialEventData]:
+        """Return OpenDART DS005 주요사항보고 rows for one company and one or more event types.
+
+        corp_code comes from search_companies (an 8-digit DART code, never a
+        stock ticker). bgn_de/end_de (both YYYYMMDD) are REQUIRED and select
+        the receipt-date range, inclusive on both ends — unlike
+        get_ownership_reports, DART's own DS005 endpoints demand this range
+        rather than answering an unbounded history. Up to ten event_types
+        per call; each type's rows are returned verbatim with every source
+        field, in request order. Supported event_types, grouped for
+        reference (an unknown value fails with the full list in its error
+        details' supported_event_types):
+        distress — bankruptcy, business_suspension, rehabilitation_filing,
+        dissolution, creditor_management_start, creditor_management_stop,
+        lawsuit;
+        capital — paid_in_capital_increase, free_capital_increase,
+        paid_in_and_free_increase, capital_reduction;
+        bonds — convertible_bond_issue, bond_with_warrant_issue,
+        exchangeable_bond_issue, writedown_contingent_bond_issue,
+        stock_related_bond_acquisition, stock_related_bond_transfer;
+        treasury stock — treasury_stock_acquisition, treasury_stock_disposal,
+        treasury_trust_contract, treasury_trust_cancel;
+        restructuring — merger, split_merger, company_split,
+        stock_exchange_transfer, business_acquisition, business_transfer,
+        asset_transfer_putback_option, tangible_asset_acquisition,
+        tangible_asset_transfer, other_corp_stock_acquisition,
+        other_corp_stock_transfer;
+        overseas listing — overseas_listing_decision, overseas_listing,
+        overseas_delisting_decision, overseas_delisting.
+        A period with no filings for every requested event type still
+        succeeds, with zero rows for each and a partial-collection warning
+        naming them — that absence is itself the answer, the same policy
+        get_ownership_reports uses for a report type with no history.
+        """
+        return run(
+            ctx,
+            lambda service: service.get_material_events(
+                corp_code, event_types, bgn_de, end_de
             ),
         )
 

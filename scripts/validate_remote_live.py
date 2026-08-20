@@ -667,7 +667,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     recorder.facts["tool_names"] = list(tool_names)
     recorder.record(
         "tools/list surface",
-        passed=len(tool_names) == 11 and "export_report_excel" not in tool_names,
+        passed=len(tool_names) == 12 and "export_report_excel" not in tool_names,
         detail=f"{len(tool_names)}개: {', '.join(tool_names)}",
     )
 
@@ -805,6 +805,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     _run_report_topics_check(client, recorder, corp_code, business_year)
     _run_company_profile_check(client, recorder, corp_code)
     _run_ownership_reports_check(client, recorder, corp_code)
+    _run_material_events_check(client, recorder, corp_code)
 
 
 def _run_negative_cases(
@@ -1206,6 +1207,74 @@ def _run_ownership_reports_check(
         print(
             "[WARN] get_ownership_reports(major_holding) row_count=0 for "
             f"corp_code={corp_code} — 대량보유 상황보고 데이터가 비어 있습니다."
+        )
+
+
+def _run_material_events_check(
+    client: RemoteClient,
+    recorder: Recorder,
+    corp_code: str,
+) -> None:
+    """Smoke-test get_material_events for the script's default company.
+
+    Row presence legitimately varies by company and period — and a company
+    genuinely having filed neither event type in range is itself a valid
+    answer under this tool's all-empty-still-succeeds policy — so row counts
+    are recorded rather than required (see the get_financial_indicators and
+    get_report_topics checks for the same pattern); only the envelope shape
+    and event_type/label echo are asserted as hard checks.
+    """
+    bgn_de = "20200101"
+    end_de = time.strftime("%Y%m%d")
+    event_types = ["treasury_stock_acquisition", "merger"]
+    payload = _as_object(
+        _data(
+            client.call(
+                "get_material_events",
+                {
+                    "corp_code": corp_code,
+                    "event_types": event_types,
+                    "bgn_de": bgn_de,
+                    "end_de": end_de,
+                },
+                label="get_material_events",
+            ),
+            "get_material_events",
+        ),
+        "MaterialEventData",
+    )
+    events = [
+        _as_object(row, "event") for row in _as_array(payload.get("events"), "events")
+    ]
+    row_counts = {
+        _as_text(event.get("event_type"), "event_type"): _as_int(
+            event.get("row_count"), "row_count"
+        )
+        for event in events
+    }
+    labels = {
+        _as_text(event.get("event_type"), "event_type"): event.get("label")
+        for event in events
+    }
+    recorder.facts["get_material_events"] = {
+        "bgn_de": bgn_de,
+        "end_de": end_de,
+        "event_types": event_types,
+        "row_counts": row_counts,
+        "labels": labels,
+        "returned_row_count": payload.get("returned_row_count"),
+    }
+    recorder.record(
+        "get_material_events 응답 봉투 및 라벨링",
+        passed=set(row_counts) == set(event_types)
+        and all(isinstance(label, str) and bool(label) for label in labels.values()),
+        detail=f"event_types={event_types} row_counts={row_counts}",
+    )
+    if all(count == 0 for count in row_counts.values()):
+        print(
+            "[WARN] get_material_events row_count=0 for every requested "
+            f"event_type, corp_code={corp_code} bgn_de={bgn_de} end_de={end_de} — "
+            "해당 기간에 주요사항보고 정보가 비어 있습니다."
         )
 
 

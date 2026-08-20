@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Final, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -23,6 +21,7 @@ from dart_crawler.domains.query_guards import (
     guard_corp_code,
     guard_row_count,
 )
+from dart_crawler.domains.registry import RegistryEntry, as_registry
 from dart_crawler.result import (
     ErrorCode,
     JsonObject,
@@ -41,30 +40,16 @@ _DATE_PATTERN: Final = re.compile(r"^\d{8}$", re.ASCII)
 _DATE_FORMAT_NEXT_ACTION: Final = "bgn_de와 end_de를 YYYYMMDD 형식으로 입력하세요."
 _DATE_ORDER_NEXT_ACTION: Final = "bgn_de가 end_de보다 늦지 않도록 입력하세요."
 
-
-@dataclass(frozen=True, slots=True)
-class OwnershipReport:
-    """One DS004 ownership report type: an endpoint behind a stable name."""
-
-    key: str
-    endpoint: str
-    label: str
+# One DS004 ownership report type: an endpoint behind a stable name. Kept as
+# an alias (rather than its own dataclass) now that domains/registry.py owns
+# the shared key/endpoint/label shape used by report_topics, ownership, and
+# material_events.
+OwnershipReport = RegistryEntry
 
 
 def _as_report_registry(*reports: OwnershipReport) -> Mapping[str, OwnershipReport]:
     """Build an immutable, key- and endpoint-unique registry."""
-    registry: dict[str, OwnershipReport] = {}
-    endpoints: dict[str, str] = {}
-    for report in reports:
-        if report.key in registry:
-            msg = f"duplicate ownership report key: {report.key!r}"
-            raise ValueError(msg)
-        if report.endpoint in endpoints:
-            msg = f"duplicate ownership report endpoint: {report.endpoint!r}"
-            raise ValueError(msg)
-        registry[report.key] = report
-        endpoints[report.endpoint] = report.key
-    return MappingProxyType(registry)
+    return as_registry(*reports, noun="ownership report")
 
 
 OWNERSHIP_REPORTS: Final = _as_report_registry(

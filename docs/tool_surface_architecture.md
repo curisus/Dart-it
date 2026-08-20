@@ -8,8 +8,8 @@
 
 | 표면 | 컨셉 | 도구 구성 |
 |---|---|---|
-| **로컬** (`mcp_server.py`, stdio) | 전체 기능 superset. API 키가 컴퓨터 밖으로 나가지 않는 안전성이 강점. 파일 반출(xlsx, md)을 포함해 더 넓은 작업을 지원 | 공통 조회 11종 + export 그룹(xlsx, md) |
-| **원격** (`remote_server.py`, Vercel) | 모든 조회 도구를 제공. 설치 없이 사용, 키는 요청마다 전달(헤더 > Bearer > `?key=`) | 공통 조회 11종 전부 |
+| **로컬** (`mcp_server.py`, stdio) | 전체 기능 superset. API 키가 컴퓨터 밖으로 나가지 않는 안전성이 강점. 파일 반출(xlsx, md)을 포함해 더 넓은 작업을 지원 | 공통 조회 12종 + export 그룹(xlsx, md) |
+| **원격** (`remote_server.py`, Vercel) | 모든 조회 도구를 제공. 설치 없이 사용, 키는 요청마다 전달(헤더 > Bearer > `?key=`) | 공통 조회 12종 전부 |
 
 원칙: **중복 기능은 카탈로그로 통합, 파일 반출만 로컬에만.** 원격에는 파일을 쓸 수 없어 export 그룹만 못 올리고, 조회 도구는 로컬·원격에 항상 동시에 올린다.
 
@@ -19,10 +19,13 @@
 ① 데이터 계층   crawler_service.py — coverage의 단일 원천, CrawlerService가 한 줄 위임
                 domains/ 패키지    — 도메인별 서비스가 검증·조회·크기가드를 담당
                   query_guards.py = corp_code/연도/reprt_code 등 공용 입력 검증 가드
+                  registry.py     = RegistryEntry/as_registry, key·endpoint·label 레지스트리 공용 헬퍼
+                                    (report_topics/ownership/material_events 세 도메인이 공유)
                   financials.py   = FinancialsService(전체 계정/주요계정/재무지표), DS003 조회
                   report_topics.py = ReportTopicService(감사정보 등 DS002 topic 레지스트리 조회)
                   company_profile.py = CompanyProfileService(기업개황 단일 조회), DS001 company.json
                   ownership.py    = OwnershipService(대량보유·임원 소유보고 레지스트리 조회), DS004
+                  material_events.py = MaterialEventService(주요사항보고 36종 레지스트리 조회), DS005
                 = 모두 DART에서 데이터를 가져와 Result[T]로 반환
                       │
 ② 도구 카탈로그  tool_catalog.py

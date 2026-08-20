@@ -9,8 +9,6 @@ is a registry-only change (see ``REPORT_TOPICS``).
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Final, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -23,6 +21,7 @@ from dart_crawler.domains.query_guards import (
     guard_reprt_code,
     guard_row_count,
 )
+from dart_crawler.domains.registry import RegistryEntry, as_registry
 from dart_crawler.result import (
     ErrorCode,
     JsonObject,
@@ -36,30 +35,16 @@ from dart_crawler.section_models import MAX_RESPONSE_TEXT_CHARS
 
 _SPLIT_TOPICS_NEXT_ACTION: Final = "topic을 나누어 호출하세요."
 
-
-@dataclass(frozen=True, slots=True)
-class ReportTopic:
-    """One DS002 key-information topic: an endpoint behind a stable name."""
-
-    key: str
-    endpoint: str
-    label: str
+# One DS002 key-information topic: an endpoint behind a stable name. Kept as
+# an alias (rather than its own dataclass) now that domains/registry.py owns
+# the shared key/endpoint/label shape used by report_topics, ownership, and
+# material_events.
+ReportTopic = RegistryEntry
 
 
 def _as_registry(*topics: ReportTopic) -> Mapping[str, ReportTopic]:
     """Build an immutable, key- and endpoint-unique registry."""
-    registry: dict[str, ReportTopic] = {}
-    endpoints: dict[str, str] = {}
-    for topic in topics:
-        if topic.key in registry:
-            msg = f"duplicate report topic key: {topic.key!r}"
-            raise ValueError(msg)
-        if topic.endpoint in endpoints:
-            msg = f"duplicate report topic endpoint: {topic.endpoint!r}"
-            raise ValueError(msg)
-        registry[topic.key] = topic
-        endpoints[topic.endpoint] = topic.key
-    return MappingProxyType(registry)
+    return as_registry(*topics, noun="report topic")
 
 
 REPORT_TOPICS: Final = _as_registry(
