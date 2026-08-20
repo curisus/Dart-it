@@ -181,7 +181,7 @@ def test_missing_api_key_fails_with_config_error(
 
 
 @pytest.mark.anyio
-async def test_remote_server_exposes_exactly_the_eight_data_tools() -> None:
+async def test_remote_server_exposes_exactly_the_nine_data_tools() -> None:
     listed = await create_remote_server().list_tools()
 
     names = {tool.name for tool in listed}
@@ -194,6 +194,7 @@ async def test_remote_server_exposes_exactly_the_eight_data_tools() -> None:
         "get_financial_statements",
         "get_major_accounts",
         "get_financial_indicators",
+        "get_report_topics",
     }
     assert "export_report_excel" not in names
 
@@ -304,6 +305,7 @@ async def test_tools_list_over_http_needs_no_api_key() -> None:
         "get_financial_statements",
         "get_major_accounts",
         "get_financial_indicators",
+        "get_report_topics",
     }
     selection_tool = next(
         tool for tool in listed.tools if tool.name == "get_report_sections"
