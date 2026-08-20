@@ -205,7 +205,10 @@ async def test_local_surface_is_the_remote_surface_plus_the_export_group() -> No
     remote = {tool.name: tool for tool in await create_remote_server().list_tools()}
     local = {tool.name: tool for tool in await local_mcp.list_tools()}
 
-    assert set(local) == set(remote) | {"export_report_excel"}
+    assert set(local) == set(remote) | {
+        "export_report_excel",
+        "export_report_markdown",
+    }
     # Every shared tool must be byte-identical on both surfaces: same
     # description, same advertised parameters. A divergence means a tool was
     # defined outside the catalog.

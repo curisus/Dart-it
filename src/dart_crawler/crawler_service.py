@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, TypeVar
 
 from pydantic import SecretStr
 
@@ -28,6 +28,7 @@ from dart_crawler.domains.report_topics import ReportTopicData, ReportTopicServi
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
 from dart_crawler.filing_service import FilingService
 from dart_crawler.http_client import HttpClient
+from dart_crawler.markdown_export import MarkdownExportedFile, MarkdownExportService
 from dart_crawler.result import (
     ErrorCode,
     ErrorInfo,
@@ -47,6 +48,8 @@ from dart_crawler.section_models import (
 )
 
 PARSER_VERSION: Final = "0.1.0"
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +169,52 @@ class CrawlerService:
                 ),
                 next_action="출력 폴더가 설정된 로컬 서버에서 실행하세요.",
             )
+        context = self._prepare_export_context(rcept_no, attachment_id)
+        if not context.ok or context.data is None:
+            return Result.failure(
+                context.error
+                if context.error is not None
+                else _not_found("첨부문서를 준비하지 못했습니다."),
+                warnings=context.warnings,
+                next_action=context.next_action,
+            )
+        exported = ExcelExportService(output_dir).export(context.data)
+        return _merge_export_warnings(exported, (), "엑셀 생성에 실패했습니다.")
+
+    def export_report_markdown(
+        self,
+        rcept_no: str,
+        attachment_id: str,
+    ) -> Result[MarkdownExportedFile]:
+        """Collect, compare, parse, and render one selected attachment as Markdown."""
+        output_dir = self._output_dir
+        if output_dir is None:
+            return Result.failure(
+                error_info(
+                    ErrorCode.CONFIG_ERROR,
+                    "출력 폴더가 설정되지 않아 마크다운을 만들 수 없습니다.",
+                    retryable=False,
+                ),
+                next_action="출력 폴더가 설정된 로컬 서버에서 실행하세요.",
+            )
+        context = self._prepare_export_context(rcept_no, attachment_id)
+        if not context.ok or context.data is None:
+            return Result.failure(
+                context.error
+                if context.error is not None
+                else _not_found("첨부문서를 준비하지 못했습니다."),
+                warnings=context.warnings,
+                next_action=context.next_action,
+            )
+        exported = MarkdownExportService(output_dir).export(context.data)
+        return _merge_export_warnings(exported, (), "마크다운 생성에 실패했습니다.")
+
+    def _prepare_export_context(
+        self,
+        rcept_no: str,
+        attachment_id: str,
+    ) -> Result[ExportContext]:
+        """Collect, compare, and package one selected attachment for either exporter."""
         disclosure = self._api.find_disclosure(rcept_no)
         if not disclosure.ok or disclosure.data is None:
             return Result.failure(
@@ -200,23 +249,23 @@ class CrawlerService:
                 ),
             )
         correction_chain = _correction_chain(self._api, disclosure.data)
-        context = ExportContext(
-            company_name=disclosure.data.corp_name,
-            report_date=report_date,
-            report_title=loaded.data.attachment_title,
-            receipt_date=disclosure.data.rcept_dt,
-            rcept_no=rcept_no,
-            source_rcept_no=loaded.data.source_rcept_no,
-            attachment_id=attachment_id,
-            correction_chain=correction_chain,
-            source_url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
-            parser_version=PARSER_VERSION,
-            document=document,
-            comparison_warnings=comparison_warnings,
-            collection_warnings=loaded.warnings + date_warning,
+        return Result.success(
+            ExportContext(
+                company_name=disclosure.data.corp_name,
+                report_date=report_date,
+                report_title=loaded.data.attachment_title,
+                receipt_date=disclosure.data.rcept_dt,
+                rcept_no=rcept_no,
+                source_rcept_no=loaded.data.source_rcept_no,
+                attachment_id=attachment_id,
+                correction_chain=correction_chain,
+                source_url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}",
+                parser_version=PARSER_VERSION,
+                document=document,
+                comparison_warnings=comparison_warnings,
+                collection_warnings=loaded.warnings + date_warning,
+            )
         )
-        exported = ExcelExportService(output_dir).export(context)
-        return _merge_warnings(exported, ())
 
     def list_report_sections(
         self,
@@ -509,10 +558,11 @@ def _not_found(message: str) -> ErrorInfo:
     return error_info(ErrorCode.NOT_FOUND, message, retryable=False)
 
 
-def _merge_warnings(
-    result: Result[ExportedFile],
+def _merge_export_warnings(
+    result: Result[T],
     additional: tuple[WarningInfo, ...],
-) -> Result[ExportedFile]:
+    fallback_message: str,
+) -> Result[T]:
     if result.ok and result.data is not None:
         return Result.success(
             result.data,
@@ -520,9 +570,7 @@ def _merge_warnings(
             next_action=result.next_action,
         )
     return Result.failure(
-        result.error
-        if result.error is not None
-        else _not_found("엑셀 생성에 실패했습니다."),
+        result.error if result.error is not None else _not_found(fallback_message),
         warnings=result.warnings + additional,
         next_action=result.next_action,
     )

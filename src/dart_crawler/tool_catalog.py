@@ -27,6 +27,7 @@ from dart_crawler.domains.financials import (
 )
 from dart_crawler.domains.report_topics import ReportTopicData
 from dart_crawler.excel_export import ExportedFile
+from dart_crawler.markdown_export import MarkdownExportedFile
 from dart_crawler.result import Result
 from dart_crawler.section_models import ReportSectionData, ReportSectionList
 
@@ -249,8 +250,8 @@ def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
 def register_export_tools(mcp: MCPServer, run: ServiceRunner) -> None:
     """Register the file-producing tools of the local surface.
 
-    File renderers (xlsx today, markdown planned) need a writable output
-    directory, so this group never appears on the remote surface.
+    File renderers (xlsx, markdown) need a writable output directory, so this
+    group never appears on the remote surface.
     """
 
     @mcp.tool()
@@ -263,4 +264,25 @@ def register_export_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         return run(
             ctx,
             lambda service: service.export_report_excel(rcept_no, attachment_id),
+        )
+
+    @mcp.tool()
+    def export_report_markdown(
+        rcept_no: str,
+        attachment_id: str,
+        ctx: Context,
+    ) -> Result[MarkdownExportedFile]:
+        """Create or reuse a Markdown rendering of the selected report attachment.
+
+        Renders the whole parsed attachment — every statement, note, and text
+        section, in source order — into one Markdown file and returns the
+        output path. Amounts and text are carried verbatim, never truncated.
+        Unlike export_report_excel, a report missing a core financial
+        statement still succeeds: the file is written with what the source
+        holds, and the response's missing_sections and collection_status
+        report what is absent.
+        """
+        return run(
+            ctx,
+            lambda service: service.export_report_markdown(rcept_no, attachment_id),
         )

@@ -62,6 +62,7 @@ uv run dart-crawler-mcp
 2. `list_report_filings(corp_code, report_kind)`에서 최근 5개 사업연도의 대표 공시를 선택합니다. 감사는 `FY`, 반기는 `HY`, 분기는 `1Q`와 `3Q`로 표시합니다.
 3. `list_report_attachments(rcept_no)`에서 별도 또는 연결 첨부문서를 선택합니다. 식별자는 `opendart:접수번호:ZIP파일명` 또는 `viewer:접수번호:dcmNo`입니다.
 4. `export_report_excel(rcept_no, attachment_id)`로 수집·검증·생성합니다. 결과에는 출력 경로, 전체·부분수집 상태, 기존 파일 재사용 여부, 경고가 포함됩니다.
+5. 검색·계산 가능한 Excel 대신 원문 전체를 그대로 옮긴 문서가 필요하면 `export_report_markdown(rcept_no, attachment_id)`을 사용합니다. 첨부문서의 모든 구역(의견, 재무제표, 주석, 기타 서술)을 원문 순서대로 마크다운 파일 하나에 옮기며 금액·문구는 그대로(verbatim) 보존합니다. Excel과 달리 핵심 재무제표가 빠져 있어도 실패하지 않고, 있는 그대로 생성한 뒤 `missing_sections`와 `collection_status`로 무엇이 빠졌는지 알려줍니다.
 
 파일 없이 데이터만 보려면 원격 서버와 동일한 `list_report_sections`·`get_report_sections`·`get_financial_statements`·`get_major_accounts`·`get_financial_indicators`(아래 원격 도구 사용 순서 참조)도 로컬에서 그대로 사용할 수 있습니다. 로컬 서버는 전체 기능을 제공하며 API 키가 컴퓨터 밖으로 나가지 않고, 원격 서버는 설치 없이 모든 조회 도구를 제공합니다(파일 반출은 로컬 전용).
 
