@@ -667,7 +667,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     recorder.facts["tool_names"] = list(tool_names)
     recorder.record(
         "tools/list surface",
-        passed=len(tool_names) == 8 and "export_report_excel" not in tool_names,
+        passed=len(tool_names) == 9 and "export_report_excel" not in tool_names,
         detail=f"{len(tool_names)}개: {', '.join(tool_names)}",
     )
 
@@ -802,6 +802,7 @@ def _run(client: RemoteClient, recorder: Recorder, api_key: str, query: str) -> 
     _run_cross_check(recorder, api_key, rcept_no, attachment_id, remote_sections, returned_total)
     _run_official_check(recorder, api_key, corp_code, business_year, statement_sections)
     _run_financial_data_tools_check(client, recorder, api_key, corp_code, business_year)
+    _run_report_topics_check(client, recorder, corp_code, business_year)
 
 
 def _run_negative_cases(
@@ -1048,6 +1049,75 @@ def _run_financial_data_tools_check(
         passed=True,
         detail=f"idx_cl_code=M210000 행 {len(indicator_rows)}개",
     )
+
+
+def _run_report_topics_check(
+    client: RemoteClient,
+    recorder: Recorder,
+    corp_code: str,
+    business_year: int,
+) -> None:
+    """Smoke-test get_report_topics(audit_opinion) for the default company.
+
+    Row presence legitimately varies by company/year even for a topic that
+    reliably carries data, so row_count is recorded rather than required:
+    an empty result degrades to a printed note instead of aborting the run.
+    """
+    topics = _as_array(
+        _as_object(
+            _data(
+                client.call(
+                    "get_report_topics",
+                    {
+                        "corp_code": corp_code,
+                        "bsns_year": business_year,
+                        "reprt_code": _ANNUAL_REPORT_CODE,
+                        "topics": ["audit_opinion"],
+                    },
+                    label="get_report_topics(audit_opinion)",
+                ),
+                "get_report_topics(audit_opinion)",
+            ),
+            "ReportTopicData",
+        ).get("topics"),
+        "topics",
+    )
+    topic_rows = [_as_object(row, "topic") for row in topics]
+    audit_opinion = next(
+        (row for row in topic_rows if row.get("topic") == "audit_opinion"),
+        None,
+    )
+    label = audit_opinion.get("label") if audit_opinion is not None else None
+    row_count = (
+        _as_int(audit_opinion.get("row_count"), "row_count")
+        if audit_opinion is not None
+        else 0
+    )
+    recorder.facts["get_report_topics"] = {
+        "topics": [
+            {key: row.get(key) for key in ("topic", "label", "row_count")}
+            for row in topic_rows
+        ],
+    }
+    recorder.record(
+        "get_report_topics(audit_opinion) 라벨링",
+        passed=audit_opinion is not None and isinstance(label, str) and bool(label),
+        detail=f"topic=audit_opinion label={label!r}",
+    )
+    # Row presence legitimately varies by company/year, so only the envelope
+    # and labeling are asserted above; the row count is recorded, not
+    # required (see the get_financial_indicators check for the same pattern).
+    recorder.record(
+        "get_report_topics(audit_opinion) row_count",
+        passed=True,
+        detail=f"row_count={row_count}",
+    )
+    if row_count < 1:
+        print(
+            "[WARN] get_report_topics(audit_opinion) row_count=0 for "
+            f"corp_code={corp_code} bsns_year={business_year} — "
+            "사업보고서 감사의견 데이터가 비어 있습니다."
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

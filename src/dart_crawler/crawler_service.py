@@ -24,6 +24,7 @@ from dart_crawler.domains.financials import (
     FinancialStatementData,
     MajorAccountData,
 )
+from dart_crawler.domains.report_topics import ReportTopicData, ReportTopicService
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
 from dart_crawler.filing_service import FilingService
 from dart_crawler.http_client import HttpClient
@@ -113,6 +114,16 @@ class CrawlerService:
         return FinancialsService(self._api).indicators(
             corp_codes, bsns_year, reprt_code, idx_cl_code
         )
+
+    def get_report_topics(
+        self,
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+        topics: tuple[str, ...],
+    ) -> Result[ReportTopicData]:
+        """Return DS002 regular-report key-information rows for the topics."""
+        return ReportTopicService(self._api).get(corp_code, bsns_year, reprt_code, topics)
 
     def list_report_filings(
         self,

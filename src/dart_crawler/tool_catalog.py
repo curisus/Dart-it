@@ -25,6 +25,7 @@ from dart_crawler.domains.financials import (
     FinancialStatementData,
     MajorAccountData,
 )
+from dart_crawler.domains.report_topics import ReportTopicData
 from dart_crawler.excel_export import ExportedFile
 from dart_crawler.result import Result
 from dart_crawler.section_models import ReportSectionData, ReportSectionList
@@ -50,7 +51,7 @@ class ServiceRunner(Protocol):
 
 
 def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
-    """Register the eight read-only query tools shared by every surface."""
+    """Register the nine read-only query tools shared by every surface."""
 
     @mcp.tool()
     def search_companies(
@@ -210,6 +211,37 @@ def register_query_tools(mcp: MCPServer, run: ServiceRunner) -> None:
                 bsns_year,
                 reprt_code,
                 idx_cl_code,
+            ),
+        )
+
+    @mcp.tool()
+    def get_report_topics(
+        corp_code: str,
+        bsns_year: int,
+        reprt_code: str,
+        topics: tuple[str, ...],
+        ctx: Context,
+    ) -> Result[ReportTopicData]:
+        """Return OpenDART DS002 regular-report key-information rows for one or more topics.
+
+        corp_code comes from search_companies (an 8-digit DART code, never a
+        stock ticker). reprt_code selects the filing: 11011 annual, 11012
+        half-year, 11013 Q1, 11014 Q3. Data covers fiscal year 2015 onward.
+        Up to ten topics per call; each topic's rows are returned verbatim
+        with every source field. Supported topics: audit_opinion (auditor
+        name, audit opinion, emphasis-of-matter and key audit matters),
+        audit_service_contract (audit fee and service contract),
+        non_audit_service_contract (non-audit service contracts with the
+        auditor). An unknown topic fails with the full supported topic list
+        in its error details.
+        """
+        return run(
+            ctx,
+            lambda service: service.get_report_topics(
+                corp_code,
+                bsns_year,
+                reprt_code,
+                topics,
             ),
         )
 

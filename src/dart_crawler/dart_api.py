@@ -23,7 +23,7 @@ from dart_crawler.api_models import (
     MajorAccountRow,
 )
 from dart_crawler.http_client import HttpClient, HttpResponse
-from dart_crawler.result import ErrorCode, ErrorInfo, Result, error_info
+from dart_crawler.result import ErrorCode, ErrorInfo, JsonObject, Result, error_info
 
 _OPEN_DART_BASE = "https://opendart.fss.or.kr/api"
 _LIST_URL = f"{_OPEN_DART_BASE}/list.json"
@@ -36,6 +36,10 @@ _FINANCIAL_INDEX_SINGLE_URL = f"{_OPEN_DART_BASE}/fnlttSinglIndx.json"
 _FINANCIAL_INDEX_MULTI_URL = f"{_OPEN_DART_BASE}/fnlttCmpnyIndx.json"
 _VIEWER_URL = "https://dart.fss.or.kr/dsaf001/main.do"
 _VIEWER_DOCUMENT_URL = "https://dart.fss.or.kr/report/viewer.do"
+
+# The registry (domains/report_topics.py) owns the set of valid endpoint
+# names; this only guards against a malformed string reaching URL assembly.
+_REPORT_TOPIC_ENDPOINT_PATTERN: Final = re.compile(r"^[A-Za-z]+$", re.ASCII)
 
 _DART_STATUS_ERRORS: Final[Mapping[str, tuple[ErrorCode, bool, str]]] = {
     "010": (ErrorCode.UPSTREAM_AUTH, False, "OpenDART API 키가 등록되지 않았습니다."),
@@ -294,6 +298,37 @@ class DartApi:
             DartRowsResponse[FinancialIndexRow],
             unavailable_message="OpenDART 재무지표를 수집할 수 없습니다.",
             parse_failure_message="OpenDART 재무지표 응답 형식을 해석할 수 없습니다.",
+        )
+
+    def fetch_report_topic_rows(
+        self,
+        endpoint: str,
+        corp_code: str,
+        business_year: int,
+        report_code: str,
+    ) -> Result[tuple[JsonObject, ...]]:
+        """Fetch DS002 regular-report key-information rows for one topic."""
+        if _REPORT_TOPIC_ENDPOINT_PATTERN.match(endpoint) is None:
+            return Result.failure(
+                error_info(
+                    ErrorCode.INVALID_INPUT,
+                    "정기보고서 주요정보 endpoint 형식이 올바르지 않습니다.",
+                    retryable=False,
+                    details={"endpoint": endpoint},
+                )
+            )
+        return self._fetch_rows(
+            f"{_OPEN_DART_BASE}/{endpoint}.json",
+            {
+                "corp_code": corp_code,
+                "bsns_year": str(business_year),
+                "reprt_code": report_code,
+            },
+            DartRowsResponse[JsonObject],
+            unavailable_message="OpenDART 정기보고서 주요정보를 수집할 수 없습니다.",
+            parse_failure_message=(
+                "OpenDART 정기보고서 주요정보 응답 형식을 해석할 수 없습니다."
+            ),
         )
 
     def _fetch_rows[RowT](
