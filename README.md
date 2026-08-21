@@ -10,7 +10,7 @@ OpenDART 기업공시를 Claude와 Codex에서 바로 조회하고, 로컬에서
 
 **DART**는 금융감독원의 전자공시시스템이고, **OpenDART API**는 프로그램이 DART 데이터를 요청할 수 있게 제공되는 공식 접속 방식입니다. **MCP(Model Context Protocol)**는 AI 앱이 외부 데이터와 기능을 정해진 형식으로 호출하게 연결하는 규격입니다. Dart it은 이 둘을 연결합니다.
 
-> 원격 서버 주소: `https://dart-mcp-remote.vercel.app/api/mcp`
+> 원격 서버 주소: `https://dart-it-mcp.vercel.app/api/mcp`
 
 ## 목차
 
@@ -44,13 +44,13 @@ OpenDART 기업공시를 Claude와 Codex에서 바로 조회하고, 로컬에서
 1. [OpenDART](https://opendart.fss.or.kr/)에 가입하고 **인증키 신청/관리** 메뉴에서 API 키를 발급합니다.
 2. [claude.ai](https://claude.ai/)의 **Customize → Connectors → Add custom connector**에서 Dart it을 등록합니다.
 3. 계정에 요청 헤더 입력란이 보이면 아래와 같이 등록합니다.
-   - URL: `https://dart-mcp-remote.vercel.app/api/mcp`
+   - URL: `https://dart-it-mcp.vercel.app/api/mcp`
    - 헤더 이름: `X-OpenDART-API-Key`
    - 헤더 값: 발급받은 API 키
 4. 요청 헤더 입력란이 없다면 다음 주소를 등록할 수 있습니다.
 
 ```text
-https://dart-mcp-remote.vercel.app/api/mcp?key=발급받은_키
+https://dart-it-mcp.vercel.app/api/mcp?key=발급받은_키
 ```
 
 URL에 키를 넣으면 클라이언트 설정이나 접속 기록에 키가 남을 수 있습니다. 헤더 입력이 가능한 환경에서는 헤더 방식을 우선 사용하세요.
@@ -140,7 +140,7 @@ API 키는 OpenDART가 요청자를 확인하고 이용량을 관리하는 인�
 터미널에서 다음 명령을 실행합니다.
 
 ```powershell
-claude mcp add --transport http --scope user dart_remote https://dart-mcp-remote.vercel.app/api/mcp --header "X-OpenDART-API-Key: 발급받은_키"
+claude mcp add --transport http --scope user dart_remote https://dart-it-mcp.vercel.app/api/mcp --header "X-OpenDART-API-Key: 발급받은_키"
 ```
 
 이 명령은 API 키가 명령 기록과 Claude Code 사용자 설정에 남을 수 있습니다. 본인이 관리하는 컴퓨터에서만 실행하고, 노출된 키는 OpenDART에서 재발급하세요.
@@ -151,7 +151,7 @@ PowerShell에서 API 키를 환경변수로 설정한 뒤 원격 서버를 등�
 
 ```powershell
 $env:OPEN_DART_API_KEY = "발급받은_키"
-codex mcp add dart_remote --url https://dart-mcp-remote.vercel.app/api/mcp --bearer-token-env-var OPEN_DART_API_KEY
+codex mcp add dart_remote --url https://dart-it-mcp.vercel.app/api/mcp --bearer-token-env-var OPEN_DART_API_KEY
 ```
 
 이 설정은 키 자체가 아니라 키를 읽을 환경변수 이름을 Codex 설정에 기록합니다. 이후 Codex를 실행할 때도 `OPEN_DART_API_KEY` 환경변수에 키가 있어야 합니다. Codex는 이 값을 `Authorization: Bearer` 헤더로 전달합니다.
