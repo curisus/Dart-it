@@ -1,21 +1,21 @@
-# DART MCP
+# Dart it
 
 OpenDART 기업공시를 Claude와 Codex에서 바로 조회하고, 로컬에서는 검증된 Excel·Markdown 파일까지 생성합니다.
 
 ![Dart it GitHub 대표 이미지](docs/assets/dart_it_github_hero.png)
 
-[![Version](https://img.shields.io/badge/version-0.1.0-2563EB)](https://github.com/curisus/Dart-Crawler)
+[![Version](https://img.shields.io/badge/version-0.1.0-2563EB)](https://github.com/curisus/Dart-it)
 [![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-F5C518)](LICENSE)
 
-**DART**는 금융감독원의 전자공시시스템이고, **OpenDART API**는 프로그램이 DART 데이터를 요청할 수 있게 제공되는 공식 접속 방식입니다. **MCP(Model Context Protocol)**는 AI 앱이 외부 데이터와 기능을 정해진 형식으로 호출하게 연결하는 규격입니다. DART MCP는 이 둘을 연결합니다.
+**DART**는 금융감독원의 전자공시시스템이고, **OpenDART API**는 프로그램이 DART 데이터를 요청할 수 있게 제공되는 공식 접속 방식입니다. **MCP(Model Context Protocol)**는 AI 앱이 외부 데이터와 기능을 정해진 형식으로 호출하게 연결하는 규격입니다. Dart it은 이 둘을 연결합니다.
 
 > 원격 서버 주소: `https://dart-mcp-remote.vercel.app/api/mcp`
 
 ## 목차
 
 - [설치 없이 빠르게 시작하기](#설치-없이-빠르게-시작하기)
-- [왜 DART MCP를 사용하나요?](#왜-dart-mcp를-사용하나요)
+- [왜 Dart it을 사용하나요?](#왜-dart-it을-사용하나요)
 - [무엇을 할 수 있나요?](#무엇을-할-수-있나요)
 - [원격과 로컬의 차이](#원격과-로컬의-차이)
 - [온보딩과 연결 방법](#온보딩과-연결-방법)
@@ -28,7 +28,7 @@ OpenDART 기업공시를 Claude와 Codex에서 바로 조회하고, 로컬에서
 
 ## 설치 없이 빠르게 시작하기
 
-원격 서버를 사용하면 DART MCP 자체를 컴퓨터에 설치하지 않아도 됩니다. 필요한 것은 [OpenDART](https://opendart.fss.or.kr/)에서 발급한 API 키와 원격 MCP 연결을 지원하는 앱입니다.
+원격 서버를 사용하면 Dart it 자체를 컴퓨터에 설치하지 않아도 됩니다. 필요한 것은 [OpenDART](https://opendart.fss.or.kr/)에서 발급한 API 키와 원격 MCP 연결을 지원하는 앱입니다.
 
 **MCP 클라이언트**는 MCP 서버에 연결해 도구를 호출하는 앱입니다. 이 README에서 안내하는 연결 방식은 다음과 같습니다.
 
@@ -42,7 +42,7 @@ OpenDART 기업공시를 Claude와 Codex에서 바로 조회하고, 로컬에서
 ### Claude for Excel 빠른 시작
 
 1. [OpenDART](https://opendart.fss.or.kr/)에 가입하고 **인증키 신청/관리** 메뉴에서 API 키를 발급합니다.
-2. [claude.ai](https://claude.ai/)의 **Customize → Connectors → Add custom connector**에서 DART MCP를 등록합니다.
+2. [claude.ai](https://claude.ai/)의 **Customize → Connectors → Add custom connector**에서 Dart it을 등록합니다.
 3. 계정에 요청 헤더 입력란이 보이면 아래와 같이 등록합니다.
    - URL: `https://dart-mcp-remote.vercel.app/api/mcp`
    - 헤더 이름: `X-OpenDART-API-Key`
@@ -64,11 +64,11 @@ URL에 키를 넣으면 클라이언트 설정이나 접속 기록에 키가 남
 기간과 주요 합계를 다시 확인해 줘.
 ```
 
-원격 DART MCP는 데이터를 반환하고, Claude for Excel이 그 데이터를 현재 통합문서에 입력합니다. 원격 서버가 Excel 파일을 직접 생성하는 것은 아닙니다.
+원격 Dart it은 데이터를 반환하고, Claude for Excel이 그 데이터를 현재 통합문서에 입력합니다. 원격 서버가 Excel 파일을 직접 생성하는 것은 아닙니다.
 
-## 왜 DART MCP를 사용하나요?
+## 왜 Dart it을 사용하나요?
 
-DART에서 원하는 숫자를 분석하기 전에는 회사 검색, 공시 선택, 정정공시 확인, 별도·연결 첨부 선택, 표 복사와 열 정리 같은 준비 작업이 필요합니다. DART MCP는 이 과정을 AI가 순서대로 호출할 수 있는 명시적인 단계로 제공합니다.
+DART에서 원하는 숫자를 분석하기 전에는 회사 검색, 공시 선택, 정정공시 확인, 별도·연결 첨부 선택, 표 복사와 열 정리 같은 준비 작업이 필요합니다. Dart it은 이 과정을 AI가 순서대로 호출할 수 있는 명시적인 단계로 제공합니다.
 
 ```text
 회사 검색 → 공시 선택 → 별도·연결 첨부 선택 → 목차 확인
@@ -79,7 +79,7 @@ DART에서 원하는 숫자를 분석하기 전에는 회사 검색, 공시 선�
 
 실제 사용 흐름에서는 Claude for Excel이 삼성전자(`corp_code=00126380`)의 FY2025 사업보고서에서 **별도 감사보고서**를 선택하고, 목차를 확인한 뒤 `재무제표본문`, `손익계산서`, `재무상태표`, `현금흐름표` 네 개 워크시트에 원문 데이터를 정리할 수 있습니다. 이후 자산총계, 부채총계, 현금및현금성자산, 당기순이익과 전기·당기 기간을 다시 읽어 입력 결과를 확인할 수 있습니다.
 
-수집한 공시를 바탕으로 채무증권의 이자비용을 추산하는 등 후속 분석도 요청할 수 있습니다. 다만 이러한 계산은 사용자의 지시와 AI 또는 Excel 수식으로 수행되는 후속 작업이며, DART MCP에 내장된 자동계산 기능은 아닙니다.
+수집한 공시를 바탕으로 채무증권의 이자비용을 추산하는 등 후속 분석도 요청할 수 있습니다. 다만 이러한 계산은 사용자의 지시와 AI 또는 Excel 수식으로 수행되는 후속 작업이며, Dart it에 내장된 자동계산 기능은 아닙니다.
 
 ## 무엇을 할 수 있나요?
 
@@ -117,7 +117,7 @@ DART에서 원하는 숫자를 분석하기 전에는 회사 검색, 공시 선�
 | 결과 | 구조화된 데이터 | 구조화된 데이터 + 로컬 Excel·Markdown 파일 |
 | 출력 폴더 | 사용하지 않음 | `DART_MCP_OUTPUT_DIR` 또는 프로젝트 폴더의 `output` |
 | 처리 단위 | 각 HTTP 요청을 독립적으로 처리 | 로컬 MCP 프로세스가 요청을 처리 |
-| 적합한 경우 | 설치 없이 Claude for Excel·웹·터미널에서 조회 | 파일 생성이 필요하거나 원격 DART MCP를 거치지 않고 OpenDART를 호출하려는 경우 |
+| 적합한 경우 | 설치 없이 Claude for Excel·웹·터미널에서 조회 | 파일 생성이 필요하거나 원격 Dart it을 거치지 않고 OpenDART를 호출하려는 경우 |
 
 원격과 로컬의 13개 조회 도구는 이름, 입력값, 설명이 같습니다. 차이는 로컬에서만 `export_report_excel`과 `export_report_markdown`을 제공한다는 점입니다.
 
@@ -177,19 +177,19 @@ DART_MCP_OUTPUT_DIR=output
 
 ```powershell
 $env:DART_MCP_PROJECT_DIR = "C:\dart_mcp_workspace"
-uvx --from git+https://github.com/curisus/Dart-Crawler.git dart-crawler-mcp
+uvx --from git+https://github.com/curisus/Dart-it.git dart-crawler-mcp
 ```
 
 ### 6. Claude Code에 로컬 서버 등록
 
 ```powershell
-claude mcp add --transport stdio --scope user dart_local -e DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx --from git+https://github.com/curisus/Dart-Crawler.git dart-crawler-mcp
+claude mcp add --transport stdio --scope user dart_local -e DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx --from git+https://github.com/curisus/Dart-it.git dart-crawler-mcp
 ```
 
 ### 7. Codex에 로컬 서버 등록
 
 ```powershell
-codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx --from git+https://github.com/curisus/Dart-Crawler.git dart-crawler-mcp
+codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx --from git+https://github.com/curisus/Dart-it.git dart-crawler-mcp
 ```
 
 로컬 설정은 다음 순서로 결정됩니다.
@@ -304,7 +304,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 - 가능하면 URL보다 헤더를 사용하세요. URL은 접속 기록에 포함될 가능성이 더 큽니다.
 - 로컬 `.env`는 Git에 포함하지 마세요. 이 저장소의 `.gitignore`는 `.env`와 `.env.*`를 제외하고 `.env.example`만 허용합니다.
 - API 키가 노출되었다면 OpenDART에서 기존 키를 폐기하거나 재발급하세요.
-- 로컬 모드는 원격 DART MCP 서버를 거치지 않고 사용자 컴퓨터의 프로세스가 OpenDART를 직접 호출합니다.
+- 로컬 모드는 원격 Dart it 서버를 거치지 않고 사용자 컴퓨터의 프로세스가 OpenDART를 직접 호출합니다.
 
 ## 지원 범위와 제한
 
@@ -384,11 +384,11 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 
 ### OCR과 기타 제한
 
-- **OCR(Optical Character Recognition)**은 이미지 안의 글자를 텍스트로 읽는 처리입니다. 현재 DART MCP는 OCR을 수행하지 않습니다.
+- **OCR(Optical Character Recognition)**은 이미지 안의 글자를 텍스트로 읽는 처리입니다. 현재 Dart it은 OCR을 수행하지 않습니다.
 - 이미지 전용 구역은 자리표시자와 `IMAGE_CONTENT_SKIPPED` 경고로 표시되며, 결과가 `partial`일 수 있습니다.
 - 수동 PDF 업로드 기능은 제공하지 않습니다. DART에서 선택한 ZIP 또는 viewer 첨부를 읽습니다.
 - 원격 서버는 파일을 생성하지 않습니다. Excel·Markdown 파일 생성은 로컬 전용입니다.
-- 후속 계산과 해석은 MCP 클라이언트나 Excel에서 수행합니다. DART MCP의 기계적 검증은 원문과 생성 파일의 일치 여부를 확인하며, 공시 내용의 적정성이나 투자 판단을 제공하지는 않습니다.
+- 후속 계산과 해석은 MCP 클라이언트나 Excel에서 수행합니다. Dart it의 기계적 검증은 원문과 생성 파일의 일치 여부를 확인하며, 공시 내용의 적정성이나 투자 판단을 제공하지는 않습니다.
 
 ## 개발 검증
 
