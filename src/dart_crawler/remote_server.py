@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Final, TypeVar
 
 from mcp.server import MCPServer
@@ -15,6 +15,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dart_crawler.crawler_service import CrawlerService
 from dart_crawler.http_client import HttpxClient
+from dart_crawler.json_rpc_guard import JsonRpcRequestGuard
 from dart_crawler.query_limits import REMOTE_QUERY_LIMITS
 from dart_crawler.result import ErrorCode, ErrorInfo, Result, error_info
 from dart_crawler.tool_catalog import register_query_tools
@@ -42,9 +43,14 @@ def create_remote_server() -> MCPServer:
     return mcp
 
 
-def build_app(*, path: str = "/api/mcp") -> Starlette:
+def build_app(
+    *,
+    path: str = "/api/mcp",
+    server: MCPServer | None = None,
+) -> Starlette:
     """Build the ASGI application that serves the remote tools."""
-    app = create_remote_server().streamable_http_app(
+    active_server = create_remote_server() if server is None else server
+    app = active_server.streamable_http_app(
         streamable_http_path=path,
         json_response=True,
         stateless_http=True,
@@ -57,6 +63,7 @@ def build_app(*, path: str = "/api/mcp") -> Starlette:
         ),
     )
     app.add_middleware(_PostOnlyEndpoint, path=path)
+    app.add_middleware(JsonRpcRequestGuard, path=path)
     return app
 
 
@@ -149,25 +156,28 @@ def _api_key_from_headers(headers: Mapping[str, str] | None) -> Result[SecretStr
     """
     if headers is None:
         return _missing_key()
-    direct = _header_value(headers, _API_KEY_HEADER)
+    direct = next(_nonblank_header_values(headers, _API_KEY_HEADER), "")
     if direct:
         return Result.success(SecretStr(direct))
-    scheme, _, credentials = _header_value(headers, _AUTHORIZATION_HEADER).partition(
-        " "
-    )
-    bearer_key = credentials.strip()
-    if scheme.casefold() == _BEARER_SCHEME and bearer_key:
-        return Result.success(SecretStr(bearer_key))
+    for authorization in _nonblank_header_values(headers, _AUTHORIZATION_HEADER):
+        components = authorization.split(maxsplit=1)
+        if len(components) != 2:
+            continue
+        scheme, credentials = components
+        if scheme.casefold() == _BEARER_SCHEME and credentials:
+            return Result.success(SecretStr(credentials))
     return _missing_key()
 
 
-def _header_value(headers: Mapping[str, str], name: str) -> str:
-    # Starlette's Headers mapping already matches case-insensitively, but a
-    # plain dict does not, so the comparison happens here for both.
+def _nonblank_header_values(
+    headers: Mapping[str, str],
+    name: str,
+) -> Iterator[str]:
     for key, value in headers.items():
         if key.casefold() == name:
-            return value.strip()
-    return ""
+            normalized = value.strip()
+            if normalized:
+                yield normalized
 
 
 def _missing_key() -> Result[SecretStr]:

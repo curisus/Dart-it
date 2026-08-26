@@ -359,22 +359,18 @@ def test_major_accounts_rejects_too_many_corp_codes_without_calling_source() -> 
     assert source.major_accounts_calls == []
 
 
-def test_local_profile_still_rejects_eleven_corp_codes_without_calling_source() -> None:
-    assert not hasattr(LOCAL_QUERY_LIMITS, "max_companies_per_query")
-    source = RecordingFinancialSource()
+def test_excel_profile_shares_expanded_company_input_scope() -> None:
+    # Given
+    source = RecordingFinancialSource(major_accounts_result=Result.success(()))
     service = FinancialsService(source, limits=LOCAL_QUERY_LIMITS)
-    corp_codes = tuple(f"{index:08d}" for index in range(MAX_COMPANIES_PER_QUERY + 1))
+    corp_codes = tuple(f"{index:08d}" for index in range(MAX_COMPANIES_PER_QUERY))
 
+    # When
     result = service.major_accounts(corp_codes, _BSNS_YEAR, _REPRT_CODE)
 
-    assert result.ok is False
-    assert result.error is not None
-    assert result.error.code is ErrorCode.INVALID_INPUT
-    assert result.error.details == {
-        "corp_code_count": MAX_COMPANIES_PER_QUERY + 1,
-        "limit": MAX_COMPANIES_PER_QUERY,
-    }
-    assert source.major_accounts_calls == []
+    # Then
+    assert result.ok is True
+    assert source.major_accounts_calls == [(corp_codes, _BSNS_YEAR, _REPRT_CODE)]
 
 
 def test_major_accounts_rejects_malformed_corp_code_element_without_calling_source() -> (
