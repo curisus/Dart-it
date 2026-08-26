@@ -15,7 +15,11 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
-from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
+from dart_crawler.query_limits import (
+    DEFAULT_QUERY_LIMITS,
+    MAX_COMPANIES_PER_QUERY,
+    QueryLimits,
+)
 from dart_crawler.result import ErrorCode, ErrorInfo, JsonObject, error_info
 
 # Kept as sorted tuples (rather than frozensets) so the same values that
@@ -139,6 +143,7 @@ def guard_corp_codes(
     limits: QueryLimits = DEFAULT_QUERY_LIMITS,
 ) -> GuardViolation | None:
     """Reject an empty, oversized, or malformed corp_code tuple."""
+    del limits
     if not corp_codes:
         return GuardViolation(
             error_info(
@@ -148,7 +153,7 @@ def guard_corp_codes(
             ),
             next_action=_SEARCH_COMPANIES_NEXT_ACTION,
         )
-    if len(corp_codes) > limits.max_companies_per_query:
+    if len(corp_codes) > MAX_COMPANIES_PER_QUERY:
         return GuardViolation(
             error_info(
                 ErrorCode.INVALID_INPUT,
@@ -156,7 +161,7 @@ def guard_corp_codes(
                 retryable=False,
                 details={
                     "corp_code_count": len(corp_codes),
-                    "limit": limits.max_companies_per_query,
+                    "limit": MAX_COMPANIES_PER_QUERY,
                 },
             ),
             next_action="회사를 나누어 호출하세요.",

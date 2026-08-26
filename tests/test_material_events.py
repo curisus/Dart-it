@@ -254,6 +254,26 @@ def test_get_rejects_more_than_the_event_type_limit_without_calling_source() -> 
     assert source.calls == []
 
 
+def test_local_profile_still_rejects_eleven_event_types_without_calling_source() -> None:
+    assert not hasattr(LOCAL_QUERY_LIMITS, "max_topics_per_query")
+    source = RecordingMaterialEventSource()
+    service = MaterialEventService(source, limits=LOCAL_QUERY_LIMITS)
+    event_types = tuple(
+        f"event_{index}" for index in range(MAX_TOPICS_PER_QUERY + 1)
+    )
+
+    result = service.get(_CORP_CODE, event_types, _BGN_DE, _END_DE)
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.error.details == {
+        "event_type_count": MAX_TOPICS_PER_QUERY + 1,
+        "limit": MAX_TOPICS_PER_QUERY,
+    }
+    assert source.calls == []
+
+
 def test_get_rejects_duplicate_event_types_without_calling_source() -> None:
     source = RecordingMaterialEventSource()
     service = MaterialEventService(source)

@@ -205,6 +205,24 @@ def test_get_rejects_more_than_the_topic_limit_without_calling_source() -> None:
     assert source.calls == []
 
 
+def test_local_profile_still_rejects_eleven_topics_without_calling_source() -> None:
+    assert not hasattr(LOCAL_QUERY_LIMITS, "max_topics_per_query")
+    source = RecordingReportTopicSource()
+    service = ReportTopicService(source, limits=LOCAL_QUERY_LIMITS)
+    topics = tuple(f"topic_{index}" for index in range(MAX_TOPICS_PER_QUERY + 1))
+
+    result = service.get(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, topics)
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.error.details == {
+        "topic_count": MAX_TOPICS_PER_QUERY + 1,
+        "limit": MAX_TOPICS_PER_QUERY,
+    }
+    assert source.calls == []
+
+
 def test_get_rejects_duplicate_topics_without_calling_source() -> None:
     # Given
     source = RecordingReportTopicSource()

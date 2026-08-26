@@ -22,7 +22,11 @@ from dart_crawler.domains.query_guards import (
     guard_text_char_count,
 )
 from dart_crawler.domains.registry import RegistryEntry, as_registry
-from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
+from dart_crawler.query_limits import (
+    DEFAULT_QUERY_LIMITS,
+    MAX_TOPICS_PER_QUERY,
+    QueryLimits,
+)
 from dart_crawler.result import (
     ErrorCode,
     JsonObject,
@@ -341,7 +345,7 @@ class ReportTopicService:
                 ),
                 next_action=_supported_topics_next_action(self._registry),
             )
-        if len(topics) > self._limits.max_topics_per_query:
+        if len(topics) > MAX_TOPICS_PER_QUERY:
             return GuardViolation(
                 error_info(
                     ErrorCode.INVALID_INPUT,
@@ -349,7 +353,7 @@ class ReportTopicService:
                     retryable=False,
                     details={
                         "topic_count": len(topics),
-                        "limit": self._limits.max_topics_per_query,
+                        "limit": MAX_TOPICS_PER_QUERY,
                     },
                 ),
                 next_action="topic을 나누어 호출하세요.",

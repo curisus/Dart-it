@@ -32,7 +32,11 @@ from dart_crawler.domains.query_guards import (
     guard_text_char_count,
 )
 from dart_crawler.domains.registry import RegistryEntry, as_registry
-from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
+from dart_crawler.query_limits import (
+    DEFAULT_QUERY_LIMITS,
+    MAX_TOPICS_PER_QUERY,
+    QueryLimits,
+)
 from dart_crawler.result import (
     ErrorCode,
     JsonObject,
@@ -308,7 +312,7 @@ class MaterialEventService:
                 ),
                 next_action=_SUPPORTED_EVENT_TYPES_NEXT_ACTION,
             )
-        if len(event_types) > self._limits.max_topics_per_query:
+        if len(event_types) > MAX_TOPICS_PER_QUERY:
             return GuardViolation(
                 error_info(
                     ErrorCode.INVALID_INPUT,
@@ -316,7 +320,7 @@ class MaterialEventService:
                     retryable=False,
                     details={
                         "event_type_count": len(event_types),
-                        "limit": self._limits.max_topics_per_query,
+                        "limit": MAX_TOPICS_PER_QUERY,
                     },
                 ),
                 next_action="event_type을 나누어 호출하세요.",

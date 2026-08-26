@@ -4,10 +4,6 @@ from typing import Final
 
 @dataclass(frozen=True, slots=True)
 class QueryLimits:
-    """Limits shared by the query services in one runtime environment."""
-
-    max_companies_per_query: int
-    max_topics_per_query: int
     max_response_rows: int | None
     max_response_cells: int | None
     max_response_text_chars: int | None
@@ -26,8 +22,6 @@ MAX_RESPONSE_CELLS: Final = 20_000
 MAX_RESPONSE_TEXT_CHARS: Final = 200_000
 
 REMOTE_QUERY_LIMITS: Final = QueryLimits(
-    max_companies_per_query=MAX_COMPANIES_PER_QUERY,
-    max_topics_per_query=MAX_TOPICS_PER_QUERY,
     max_response_rows=MAX_RESPONSE_ROWS,
     max_response_cells=MAX_RESPONSE_CELLS,
     max_response_text_chars=MAX_RESPONSE_TEXT_CHARS,
