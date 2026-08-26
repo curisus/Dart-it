@@ -208,7 +208,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 
 | 구분 | 도구 | 주요 입력 | 하는 일과 기준 |
 | --- | --- | --- | --- |
-| 회사·공시 | `search_companies` | `company_query`, `report_kind` | 회사명 또는 6자리 종목코드로 최대 5개 회사를 찾습니다. `report_kind`는 `audit`, `quarterly_review`, `half_year_review` 중 하나입니다. |
+| 회사·공시 | `search_companies` | `company_query`, 선택적 `report_kind` | `report_kind`를 생략하거나 `null`로 두면 OpenDART 회사코드 전체에서 최대 5개를 순위화합니다(시장구분은 `null`). 지정하면 `audit`, `quarterly_review`, `half_year_review` 공시가 있는 회사만 찾습니다. |
 | 회사·공시 | `list_report_filings` | `corp_code`, `report_kind` | 최근 5개 사업연도의 대표 공시를 반환합니다. 정정 계열은 묶고 철회된 공시는 제외합니다. |
 | 회사·공시 | `list_report_attachments` | `rcept_no` | 선택 가능한 별도·연결 첨부를 반환합니다. 식별자는 `opendart:접수번호:파일명` 또는 `viewer:접수번호:dcmNo` 형식입니다. |
 | 첨부 원문 | `list_report_sections` | `rcept_no`, `attachment_id` | 첨부문서의 목차를 내용 없이 반환합니다. 각 항목에는 `section_id`, 제목, 종류, 블록·표·셀·텍스트 수, 이미지 포함 여부가 들어갑니다. |

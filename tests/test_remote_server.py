@@ -224,6 +224,19 @@ async def test_local_surface_is_the_remote_surface_plus_the_export_group() -> No
         assert local[name].input_schema == remote_tool.input_schema
 
 
+@pytest.mark.anyio
+async def test_search_report_kind_is_optional_on_local_and_remote_surfaces() -> None:
+    local = {tool.name: tool for tool in await local_mcp.list_tools()}
+    remote = {tool.name: tool for tool in await create_remote_server().list_tools()}
+
+    for tool in (local["search_companies"], remote["search_companies"]):
+        assert "report_kind" not in tool.input_schema.get("required", [])
+        assert tool.input_schema["properties"]["report_kind"]["anyOf"] == [
+            {"type": "string"},
+            {"type": "null"},
+        ]
+
+
 async def _post_jsonrpc(
     method: str,
     params: JsonObject,

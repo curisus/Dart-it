@@ -6,8 +6,8 @@ import pytest
 
 from dart_crawler.api_models import DartListRow
 from dart_crawler.company_search import CompanySearchService
-from dart_crawler.domain import Company, MatchConfidence
-from dart_crawler.result import Result
+from dart_crawler.domain import Company, Market, MatchConfidence
+from dart_crawler.result import ErrorCode, Result
 
 
 def _company_archive() -> bytes:
@@ -114,6 +114,40 @@ class FakeSource:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class NoDisclosureSource:
+    archive: bytes
+
+    def download_company_codes(self) -> Result[bytes]:
+        return Result.success(self.archive)
+
+    def list_disclosures(
+        self,
+        corp_code: str,
+        report_detail_type: str,
+    ) -> Result[tuple[DartListRow, ...]]:
+        del corp_code, report_detail_type
+        raise AssertionError from None
+
+
+class RecordingSource:
+    def __init__(self, archive: bytes) -> None:
+        self.archive = archive
+        self.calls: list[str] = []
+
+    def download_company_codes(self) -> Result[bytes]:
+        return Result.success(self.archive)
+
+    def list_disclosures(
+        self,
+        corp_code: str,
+        report_detail_type: str,
+    ) -> Result[tuple[DartListRow, ...]]:
+        del report_detail_type
+        self.calls.append(corp_code)
+        return Result.success(())
+
+
 def test_search_prioritizes_exact_stock_code_and_returns_market() -> None:
     service = CompanySearchService(FakeSource(_company_archive()))
 
@@ -123,7 +157,7 @@ def test_search_prioritizes_exact_stock_code_and_returns_market() -> None:
     assert result.data is not None
     assert result.error is None
     assert result.data[0].company_name == "Sample Holdings"
-    assert result.data[0].market.value == "Y"
+    assert result.data[0].market is Market.KOSPI
     assert result.data[0].ranking == 1
 
 
@@ -300,3 +334,70 @@ def test_company_serialization_preserves_match_confidence() -> None:
     assert restored.data is not None
     assert restored.error is None
     assert restored.data[0].match_confidence is MatchConfidence.EXACT
+
+
+def test_search_without_report_kind_uses_archive_without_disclosures() -> None:
+    # Given
+    service = CompanySearchService(NoDisclosureSource(_company_archive()))
+
+    # When
+    result = service.search("Sample", None)
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert [company.ranking for company in result.data] == [1, 2, 3]
+    assert all(company.market is None for company in result.data)
+    assert result.data[2].stock_code is None
+
+
+def test_archive_only_no_match_uses_company_not_found_guidance() -> None:
+    # Given
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("CORPCODE.xml", "<result />")
+
+    # When
+    result = CompanySearchService(NoDisclosureSource(buffer.getvalue())).search(
+        "Missing", None
+    )
+
+    # Then
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert "회사코드" in result.error.message
+    assert "보고서" not in result.error.message
+    assert result.next_action == "회사명, 종목코드 또는 회사코드 일부를 확인하세요."
+
+
+def test_explicit_report_kind_filters_only_top_twenty_candidates() -> None:
+    # Given
+    xml = "<result>" + "".join(
+        f"<list><corp_code>{index:08d}</corp_code>"
+        f"<corp_name>Sample {index:02d}</corp_name><stock_code></stock_code></list>"
+        for index in range(21)
+    ) + "</result>"
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("CORPCODE.xml", xml)
+    source = RecordingSource(buffer.getvalue())
+
+    # When
+    result = CompanySearchService(source).search("Sample", "audit")
+
+    # Then
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert len(source.calls) == 20
+
+
+def test_search_rejects_invalid_report_kind() -> None:
+    result = CompanySearchService(FakeSource(_company_archive())).search(
+        "Sample", "unsupported"
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT

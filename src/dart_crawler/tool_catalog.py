@@ -75,10 +75,10 @@ def _register_document_tools(mcp: MCPServer, run: ServiceRunner) -> None:
     @mcp.tool()
     def search_companies(
         company_query: str,
-        report_kind: str,
         ctx: Context,
+        report_kind: str | None = None,
     ) -> Result[tuple[Company, ...]]:
-        """Search up to five companies with the requested report family."""
+        """Search up to five companies, optionally filtered by report family."""
         return run(
             ctx,
             lambda service: service.search_companies(company_query, report_kind),

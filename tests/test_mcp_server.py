@@ -7,7 +7,7 @@ from pydantic import SecretStr
 
 from dart_crawler import mcp_server
 from dart_crawler.crawler_service import CrawlerService
-from dart_crawler.domain import Company, Market, MatchConfidence
+from dart_crawler.domain import Company, Market, MatchConfidence, ReportKind
 from dart_crawler.domains.registration_statements import RegistrationStatementData
 from dart_crawler.mcp_server import mcp
 from dart_crawler.query_limits import LOCAL_QUERY_LIMITS, QueryLimits
@@ -46,6 +46,12 @@ async def test_mcp_registers_the_local_superset_and_returns_result_envelope(
     }
     assert len(query_tools) == 13
     assert len(names) == 15
+    search_tool = next(tool for tool in listed if tool.name == "search_companies")
+    assert "report_kind" not in search_tool.input_schema.get("required", [])
+    assert search_tool.input_schema["properties"]["report_kind"]["anyOf"] == [
+        {"type": "string"},
+        {"type": "null"},
+    ]
 
     result = await mcp.call_tool(
         "search_companies",
@@ -98,6 +104,64 @@ async def test_mcp_success_has_data_only_result(
     assert structured_content["data"] is not None
     assert structured_content["error"] is None
     assert structured_content["data"][0]["match_confidence"] == "exact"
+
+
+@pytest.mark.anyio
+async def test_mcp_search_passes_omitted_report_kind_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DART_MCP_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPEN_DART_API_KEY", "test-key")
+    captured: list[ReportKind | str | None] = []
+
+    def record_search(
+        _self: CrawlerService,
+        _company_query: str,
+        report_kind: ReportKind | str | None,
+    ) -> Result[tuple[Company, ...]]:
+        captured.append(report_kind)
+        return Result.success(())
+
+    monkeypatch.setattr(CrawlerService, "search_companies", record_search)
+
+    result = await mcp.call_tool("search_companies", {"company_query": "Sample"})
+
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content is not None
+    assert result.structured_content["ok"] is True
+    assert captured == [None]
+
+
+@pytest.mark.anyio
+async def test_mcp_search_preserves_null_and_explicit_report_kind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DART_MCP_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("OPEN_DART_API_KEY", "test-key")
+    captured: list[ReportKind | str | None] = []
+
+    def record_search(
+        _self: CrawlerService,
+        _company_query: str,
+        report_kind: ReportKind | str | None,
+    ) -> Result[tuple[Company, ...]]:
+        captured.append(report_kind)
+        return Result.success(())
+
+    monkeypatch.setattr(CrawlerService, "search_companies", record_search)
+
+    for arguments in (
+        {"company_query": "Sample", "report_kind": None},
+        {"company_query": "Sample", "report_kind": "audit"},
+    ):
+        result = await mcp.call_tool("search_companies", arguments)
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content is not None
+        assert result.structured_content["ok"] is True
+
+    assert captured == [None, "audit"]
 
 
 @pytest.mark.anyio

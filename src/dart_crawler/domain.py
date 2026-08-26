@@ -71,7 +71,7 @@ class Company(BaseModel):
     company_name: str = Field(min_length=1)
     corp_code: str = Field(pattern=r"^\d{8}$")
     stock_code: str | None = Field(default=None, pattern=r"^\d{6}$")
-    market: Market
+    market: Market | None
     ranking: int = Field(ge=1, le=5)
     match_confidence: MatchConfidence
 

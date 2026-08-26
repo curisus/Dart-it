@@ -94,9 +94,9 @@ class CrawlerService:
     def search_companies(
         self,
         company_query: str,
-        report_kind: ReportKind | str,
+        report_kind: ReportKind | str | None,
     ) -> Result[tuple[Company, ...]]:
-        """Search companies that have the requested report family."""
+        """Search companies, optionally requiring a report family."""
         return CompanySearchService(self._api).search(company_query, report_kind)
 
     def get_financial_statements(
