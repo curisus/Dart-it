@@ -17,6 +17,7 @@ from dart_crawler.domains.query_guards import (
     guard_reprt_code,
     guard_row_count,
 )
+from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
 from dart_crawler.result import ErrorCode, Result, error_info
 
 _CFS_NOT_FOUND_NEXT_ACTION: Final = (
@@ -93,8 +94,14 @@ class FinancialIndicatorData(BaseModel):
 class FinancialsService:
     """Validate, fetch, and size-guard DS003 financial-data requests."""
 
-    def __init__(self, source: FinancialSource) -> None:
-        self._source = source
+    def __init__(
+        self,
+        source: FinancialSource,
+        *,
+        limits: QueryLimits = DEFAULT_QUERY_LIMITS,
+    ) -> None:
+        self._source: FinancialSource = source
+        self._limits: QueryLimits = limits
 
     def full_statements(
         self,
@@ -143,7 +150,7 @@ class FinancialsService:
                 next_action=fetched.next_action,
             )
 
-        row_violation = guard_row_count(len(fetched.data))
+        row_violation = guard_row_count(len(fetched.data), limits=self._limits)
         if row_violation is not None:
             return Result.failure(
                 row_violation.error,
@@ -170,7 +177,7 @@ class FinancialsService:
     ) -> Result[MajorAccountData]:
         """Return DS003 major-account rows for one or more companies."""
         violation = (
-            guard_corp_codes(corp_codes)
+            guard_corp_codes(corp_codes, limits=self._limits)
             or guard_reprt_code(reprt_code)
             or guard_bsns_year(bsns_year)
         )
@@ -193,6 +200,7 @@ class FinancialsService:
 
         row_violation = guard_row_count(
             len(fetched.data),
+            limits=self._limits,
             next_action=_SPLIT_COMPANIES_NEXT_ACTION,
         )
         if row_violation is not None:
@@ -221,7 +229,7 @@ class FinancialsService:
     ) -> Result[FinancialIndicatorData]:
         """Return DS003 financial-index rows for one or more companies."""
         violation = (
-            guard_corp_codes(corp_codes)
+            guard_corp_codes(corp_codes, limits=self._limits)
             or guard_reprt_code(reprt_code)
             or guard_bsns_year(bsns_year)
             or guard_idx_cl_code(idx_cl_code)
@@ -250,6 +258,7 @@ class FinancialsService:
 
         row_violation = guard_row_count(
             len(fetched.data),
+            limits=self._limits,
             next_action=_SPLIT_COMPANIES_NEXT_ACTION,
         )
         if row_violation is not None:

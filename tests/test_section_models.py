@@ -10,10 +10,13 @@ from dart_crawler.document_model import (
     SourceCoverage,
 )
 from dart_crawler.document_validation import validate_document
-from dart_crawler.result import ErrorCode
-from dart_crawler.section_models import (
+from dart_crawler.query_limits import (
+    LOCAL_QUERY_LIMITS,
     MAX_RESPONSE_CELLS,
     MAX_RESPONSE_TEXT_CHARS,
+)
+from dart_crawler.result import ErrorCode
+from dart_crawler.section_models import (
     ReportSectionData,
     SectionBlock,
     SectionData,
@@ -447,6 +450,29 @@ def test_select_sections_names_both_dimensions_when_both_limits_are_exceeded() -
     assert result.error.details["limit"] == MAX_RESPONSE_CELLS
     assert result.error.details["selected_text_char_count"] == MAX_RESPONSE_TEXT_CHARS + 1
     assert result.error.details["text_char_limit"] == MAX_RESPONSE_TEXT_CHARS
+
+
+def test_select_sections_accepts_over_remote_limits_with_local_limits() -> None:
+    # Given
+    document = _narrative_document(
+        1,
+        MAX_RESPONSE_TEXT_CHARS + 1,
+        rows=_grid_rows(MAX_RESPONSE_CELLS // 10 + 1, 10),
+    )
+
+    # When
+    result = select_sections(
+        document,
+        (),
+        ("note",),
+        limits=LOCAL_QUERY_LIMITS,
+    )
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert returned_cell_count(result.data) == MAX_RESPONSE_CELLS + 10
+    assert returned_text_char_count(result.data) == MAX_RESPONSE_TEXT_CHARS + 1
 
 
 def test_select_sections_accepts_a_report_sized_mixed_selection() -> None:

@@ -3,13 +3,16 @@ from pathlib import Path
 
 import pytest
 from mcp_types import CallToolResult
+from pydantic import SecretStr
 
 from dart_crawler import mcp_server
 from dart_crawler.crawler_service import CrawlerService
 from dart_crawler.domain import Company, Market, MatchConfidence
 from dart_crawler.domains.registration_statements import RegistrationStatementData
 from dart_crawler.mcp_server import mcp
+from dart_crawler.query_limits import LOCAL_QUERY_LIMITS, QueryLimits
 from dart_crawler.result import ErrorCode, Result, error_info
+from dart_crawler.settings import AppSettings
 
 
 @pytest.mark.anyio
@@ -138,3 +141,22 @@ async def test_registration_statement_tool_passes_singular_stmt_type(
     )
 
     assert captured == ["debt_securities"]
+
+
+def test_local_entrypoint_injects_local_query_limits(tmp_path: Path) -> None:
+    # Given
+    settings = AppSettings(
+        project_dir=tmp_path,
+        api_key=SecretStr("test-key"),
+        output_dir=tmp_path / "output",
+    )
+
+    def read_limits(service: CrawlerService) -> Result[QueryLimits]:
+        return Result.success(service._limits)
+
+    # When
+    result = mcp_server._run_with_settings(settings, read_limits)
+
+    # Then
+    assert result.ok is True
+    assert result.data is LOCAL_QUERY_LIMITS

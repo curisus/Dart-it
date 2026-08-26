@@ -42,6 +42,7 @@ from dart_crawler.excel_export import ExcelExportService, ExportContext, Exporte
 from dart_crawler.filing_service import FilingService
 from dart_crawler.http_client import HttpClient
 from dart_crawler.markdown_export import MarkdownExportedFile, MarkdownExportService
+from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
 from dart_crawler.result import (
     ErrorCode,
     ErrorInfo,
@@ -83,8 +84,10 @@ class CrawlerService:
         http_client: HttpClient,
         *,
         output_dir: Path | None = None,
+        limits: QueryLimits = DEFAULT_QUERY_LIMITS,
     ) -> None:
         self._api = DartApi(http_client, api_key=api_key.get_secret_value())
+        self._limits: QueryLimits = limits
         # Remote requests have no writable filesystem, so exporting is optional.
         self._output_dir = output_dir
 
@@ -104,7 +107,7 @@ class CrawlerService:
         fs_div: str,
     ) -> Result[FinancialStatementData]:
         """Return every official account row for one company and filing period."""
-        return FinancialsService(self._api).full_statements(
+        return FinancialsService(self._api, limits=self._limits).full_statements(
             corp_code, bsns_year, reprt_code, fs_div
         )
 
@@ -115,7 +118,7 @@ class CrawlerService:
         reprt_code: str,
     ) -> Result[MajorAccountData]:
         """Return DS003 major-account rows for up to ten companies."""
-        return FinancialsService(self._api).major_accounts(
+        return FinancialsService(self._api, limits=self._limits).major_accounts(
             corp_codes, bsns_year, reprt_code
         )
 
@@ -127,7 +130,7 @@ class CrawlerService:
         idx_cl_code: str,
     ) -> Result[FinancialIndicatorData]:
         """Return one DS003 financial-indicator family for up to ten companies."""
-        return FinancialsService(self._api).indicators(
+        return FinancialsService(self._api, limits=self._limits).indicators(
             corp_codes, bsns_year, reprt_code, idx_cl_code
         )
 
@@ -139,7 +142,9 @@ class CrawlerService:
         topics: tuple[str, ...],
     ) -> Result[ReportTopicData]:
         """Return DS002 regular-report key-information rows for the topics."""
-        return ReportTopicService(self._api).get(corp_code, bsns_year, reprt_code, topics)
+        return ReportTopicService(self._api, limits=self._limits).get(
+            corp_code, bsns_year, reprt_code, topics
+        )
 
     def get_company_profile(self, corp_code: str) -> Result[CompanyProfileData]:
         """Return DART DS001 company master data for one corp_code."""
@@ -153,7 +158,9 @@ class CrawlerService:
         end_de: str = "",
     ) -> Result[OwnershipReportData]:
         """Return DS004 ownership-disclosure rows for one company and report type."""
-        return OwnershipService(self._api).get(corp_code, report_type, bgn_de, end_de)
+        return OwnershipService(self._api, limits=self._limits).get(
+            corp_code, report_type, bgn_de, end_de
+        )
 
     def get_material_events(
         self,
@@ -163,7 +170,7 @@ class CrawlerService:
         end_de: str,
     ) -> Result[MaterialEventData]:
         """Return DS005 주요사항보고 rows for the event types and receipt-date range."""
-        return MaterialEventService(self._api).get(
+        return MaterialEventService(self._api, limits=self._limits).get(
             corp_code, event_types, bgn_de, end_de
         )
 
@@ -175,7 +182,7 @@ class CrawlerService:
         end_de: str,
     ) -> Result[RegistrationStatementData]:
         """Return DS006 securities-registration groups for one stmt_type."""
-        return RegistrationStatementService(self._api).get(
+        return RegistrationStatementService(self._api, limits=self._limits).get(
             corp_code, stmt_type, bgn_de, end_de
         )
 
@@ -373,7 +380,12 @@ class CrawlerService:
                 next_action=loaded.next_action,
             )
         document = loaded.data.document
-        selected = select_sections(document, section_ids, section_kinds)
+        selected = select_sections(
+            document,
+            section_ids,
+            section_kinds,
+            limits=self._limits,
+        )
         if not selected.ok or selected.data is None:
             return Result.failure(
                 selected.error

@@ -15,6 +15,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dart_crawler.crawler_service import CrawlerService
 from dart_crawler.http_client import HttpxClient
+from dart_crawler.query_limits import REMOTE_QUERY_LIMITS
 from dart_crawler.result import ErrorCode, ErrorInfo, Result, error_info
 from dart_crawler.tool_catalog import register_query_tools
 
@@ -98,7 +99,13 @@ def _with_remote_service(
             next_action=api_key.next_action,
         )
     with HttpxClient() as http_client:
-        return operation(CrawlerService(api_key.data, http_client))
+        return operation(
+            CrawlerService(
+                api_key.data,
+                http_client,
+                limits=REMOTE_QUERY_LIMITS,
+            )
+        )
 
 
 def _api_key_from_request(ctx: Context) -> Result[SecretStr]:

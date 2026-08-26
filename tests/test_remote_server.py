@@ -20,8 +20,9 @@ from dart_crawler.document_model import (
     SourceCoverage,
 )
 from dart_crawler.domain import Attachment
-from dart_crawler.http_client import HttpResponse
+from dart_crawler.http_client import HttpClient, HttpResponse
 from dart_crawler.mcp_server import mcp as local_mcp
+from dart_crawler.query_limits import REMOTE_QUERY_LIMITS, QueryLimits
 from dart_crawler.remote_server import (
     _api_key_from_headers,
     build_app,
@@ -375,13 +376,22 @@ async def test_tools_call_without_key_header_returns_config_error_envelope() -> 
     assert "X-OpenDART-API-Key" in envelope["next_action"]
 
 
-def _install_key_recording_service(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def _install_key_recording_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, QueryLimits]]:
     """Swap the service the remote tools build for one that records its key."""
-    captured: list[str] = []
+    captured: list[tuple[str, QueryLimits]] = []
 
     class _RecordingService:
-        def __init__(self, api_key: SecretStr, http_client: object) -> None:
-            captured.append(api_key.get_secret_value())
+        def __init__(
+            self,
+            api_key: SecretStr,
+            http_client: HttpClient,
+            *,
+            limits: QueryLimits,
+        ) -> None:
+            del http_client
+            captured.append((api_key.get_secret_value(), limits))
 
         def list_report_attachments(
             self,
@@ -425,7 +435,7 @@ async def test_query_key_lets_a_headerless_client_call_tools(
     envelope = await _call_attachments_tool(path=f"{_MCP_PATH}?key=query-key")
 
     assert envelope["ok"] is True
-    assert captured == ["query-key"]
+    assert captured == [("query-key", REMOTE_QUERY_LIMITS)]
 
 
 @pytest.mark.anyio
@@ -440,7 +450,7 @@ async def test_header_key_wins_over_the_query_fallback(
     )
 
     assert envelope["ok"] is True
-    assert captured == ["direct-key"]
+    assert captured == [("direct-key", REMOTE_QUERY_LIMITS)]
 
 
 @pytest.mark.anyio

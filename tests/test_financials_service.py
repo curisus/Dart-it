@@ -3,7 +3,11 @@ from dataclasses import dataclass, field
 from dart_crawler.api_models import FinancialAccount, FinancialIndexRow, MajorAccountRow
 from dart_crawler.dart_api import FinancialQuery
 from dart_crawler.domains.financials import FinancialsService
-from dart_crawler.domains.query_guards import MAX_COMPANIES_PER_QUERY, MAX_RESPONSE_ROWS
+from dart_crawler.query_limits import (
+    LOCAL_QUERY_LIMITS,
+    MAX_COMPANIES_PER_QUERY,
+    MAX_RESPONSE_ROWS,
+)
 from dart_crawler.result import ErrorCode, Result, WarningCode, WarningInfo, error_info
 
 _CORP_CODE = "00126380"
@@ -298,6 +302,26 @@ def test_full_statements_rejects_row_count_over_limit_and_drops_rows() -> None:
         "returned_row_count": MAX_RESPONSE_ROWS + 1,
         "limit": MAX_RESPONSE_ROWS,
     }
+
+
+def test_full_statements_accepts_over_remote_row_limit_with_local_limits() -> None:
+    # Given
+    accounts = tuple(
+        _financial_account(account_id=f"acc-{index}")
+        for index in range(MAX_RESPONSE_ROWS + 1)
+    )
+    source = RecordingFinancialSource(
+        financial_accounts_result=Result.success(accounts)
+    )
+    service = FinancialsService(source, limits=LOCAL_QUERY_LIMITS)
+
+    # When
+    result = service.full_statements(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, "OFS")
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.returned_row_count == MAX_RESPONSE_ROWS + 1
 
 
 def test_major_accounts_rejects_empty_corp_codes_without_calling_source() -> None:

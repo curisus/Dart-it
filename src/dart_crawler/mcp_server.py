@@ -15,6 +15,7 @@ from mcp.server.mcpserver import Context
 
 from dart_crawler.crawler_service import CrawlerService
 from dart_crawler.http_client import HttpxClient
+from dart_crawler.query_limits import LOCAL_QUERY_LIMITS
 from dart_crawler.result import ErrorCode, ErrorInfo, Result, error_info
 from dart_crawler.settings import AppSettings, load_settings
 from dart_crawler.tool_catalog import register_export_tools, register_query_tools
@@ -43,6 +44,7 @@ def _run_with_settings(
                 settings.api_key,
                 http_client,
                 output_dir=settings.output_dir,
+                limits=LOCAL_QUERY_LIMITS,
             )
         )
 
