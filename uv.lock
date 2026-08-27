@@ -327,9 +327,9 @@ requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "httpx2", extras = ["http2", "brotli", "zstd"], specifier = ">=0.1.0" },
     { name = "lxml", specifier = ">=5.3" },
-    { name = "mcp", specifier = ">=2.0.0" },
+    { name = "mcp", specifier = "==2.0.0" },
     { name = "openpyxl", specifier = "==3.1.5" },
-    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic", specifier = "==2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.7" },
 ]
 

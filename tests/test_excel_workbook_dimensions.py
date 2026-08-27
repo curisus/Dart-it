@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.xml.constants import MAX_COLUMN, MAX_ROW
 
 from dart_crawler.excel_page_models import ExcelRow
 from dart_crawler.excel_query_workbook_plan import (
@@ -16,8 +17,11 @@ from tests.local_excel_export_test_support import RecordingClock
 
 
 def test_production_excel_dimension_constants_match_native_limits() -> None:
-    assert EXCEL_DATA_ROWS_PER_SHEET == 1_048_575
-    assert EXCEL_MAX_COLUMNS == 16_384
+    options = ExcelWorkbookOptions()
+
+    assert options.data_rows_per_sheet == MAX_ROW - 1
+    assert options.data_rows_per_sheet == EXCEL_DATA_ROWS_PER_SHEET
+    assert EXCEL_MAX_COLUMNS == MAX_COLUMN
 
 
 def test_injected_row_limit_splits_data_in_source_order(tmp_path: Path) -> None:
@@ -96,7 +100,7 @@ def test_ten_thousand_rows_reopen_in_exact_order(tmp_path: Path) -> None:
 
 
 def test_excel_column_limit_is_accepted_at_exact_boundary(tmp_path: Path) -> None:
-    columns = tuple(f"column_{index:05d}" for index in range(EXCEL_MAX_COLUMNS))
+    columns = tuple(f"column_{index:05d}" for index in range(MAX_COLUMN))
 
     result = publish_excel_dataset(
         make_normalized_dataset(columns, ()),
@@ -111,16 +115,16 @@ def test_excel_column_limit_is_accepted_at_exact_boundary(tmp_path: Path) -> Non
     workbook = load_workbook(exported.absolute_path, read_only=False, data_only=False)
     try:
         sheet = workbook["data"]
-        assert sheet.max_column == EXCEL_MAX_COLUMNS
+        assert sheet.max_column == MAX_COLUMN
         assert sheet.cell(1, 1).value == "column_00000"
-        assert sheet.cell(1, EXCEL_MAX_COLUMNS).value == "column_16383"
+        assert sheet.cell(1, MAX_COLUMN).value == "column_16383"
     finally:
         workbook.close()
 
 
 def test_excel_column_overflow_fails_before_output_creation(tmp_path: Path) -> None:
     columns = tuple(
-        f"column_{index:05d}" for index in range(EXCEL_MAX_COLUMNS + 1)
+        f"column_{index:05d}" for index in range(MAX_COLUMN + 1)
     )
     output_root = tmp_path / "output"
     clock = _clock()

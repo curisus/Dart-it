@@ -95,6 +95,25 @@ async def test_query_key_lets_a_headerless_client_call_tools(
 
 
 @pytest.mark.anyio
+async def test_query_key_uses_last_value_after_exactly_one_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = install_key_recording_service(monkeypatch)
+    target = RemoteRequest(
+        path=f"{MCP_PATH}?key=ignored&key=%2520decoded-once%2520"
+    )
+
+    envelope = await call_tool_envelope(
+        "list_report_attachments",
+        {"rcept_no": RCEPT_NO},
+        target,
+    )
+
+    assert envelope["ok"] is True
+    assert captured == [("%20decoded-once%20", REMOTE_QUERY_LIMITS)]
+
+
+@pytest.mark.anyio
 async def test_header_key_wins_over_the_query_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
