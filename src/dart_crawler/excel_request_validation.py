@@ -4,21 +4,22 @@ from typing import ClassVar, Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from dart_crawler.excel_argument_validation import validate_excel_query
 from dart_crawler.excel_contract_errors import excel_failure
 from dart_crawler.excel_cursor import (
     CursorBinding,
     CursorSecret,
     ExcelCursorPayload,
     decode_excel_cursor,
-    fingerprint_excel_request,
 )
+from dart_crawler.excel_dataset_identity import normalized_request_fingerprint
 from dart_crawler.excel_page_models import ExcelLoadRequest
-from dart_crawler.result import JsonObject, Result
+from dart_crawler.result import JsonValue, Result
 
 _FINGERPRINT_PATTERN: Final = r"^[0-9a-f]{64}$"
 
 
-class PreparedExcelRequest(BaseModel):
+class ValidatedExcelRequest(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(
         frozen=True,
         extra="forbid",
@@ -27,33 +28,50 @@ class PreparedExcelRequest(BaseModel):
 
     request: ExcelLoadRequest
     request_fingerprint: str = Field(pattern=_FINGERPRINT_PATTERN)
+
+
+class PreparedExcelRequest(ValidatedExcelRequest):
     cursor_payload: ExcelCursorPayload | None = None
 
 
-def prepare_excel_request(
-    raw_request: JsonObject,
-    *,
-    cursor_secret: CursorSecret,
-) -> Result[PreparedExcelRequest]:
+def validate_excel_request(
+    raw_request: JsonValue,
+) -> Result[ValidatedExcelRequest]:
     try:
         request = ExcelLoadRequest.model_validate(raw_request)
     except ValidationError:
-        failure: Result[PreparedExcelRequest] = excel_failure("invalid_request")
+        failure: Result[ValidatedExcelRequest] = excel_failure("invalid_request")
         return failure
-    request_fingerprint = fingerprint_excel_request(request)
-    if request.cursor is None:
+    validated = validate_excel_query(request.domain, request.arguments)
+    if validated.data is None:
+        return excel_failure("invalid_request")
+    request_fingerprint = normalized_request_fingerprint(
+        validated.data.domain,
+        validated.data.arguments,
+    )
+    return Result[ValidatedExcelRequest].success(
+        ValidatedExcelRequest(
+            request=request,
+            request_fingerprint=request_fingerprint,
+        )
+    )
+
+
+def bind_excel_cursor(
+    validated: ValidatedExcelRequest,
+    *,
+    cursor_secret: CursorSecret,
+) -> Result[PreparedExcelRequest]:
+    if validated.request.cursor is None:
         return Result[PreparedExcelRequest].success(
-            PreparedExcelRequest(
-                request=request,
-                request_fingerprint=request_fingerprint,
-            )
+            PreparedExcelRequest.model_validate(validated.model_dump())
         )
     decoded = decode_excel_cursor(
-        request.cursor,
+        validated.request.cursor,
         secret=cursor_secret,
         binding=CursorBinding(
-            request_fingerprint=request_fingerprint,
-            page_size=request.page_size,
+            request_fingerprint=validated.request_fingerprint,
+            page_size=validated.request.page_size,
         ),
     )
     if decoded.data is None:
@@ -66,8 +84,25 @@ def prepare_excel_request(
         )
     return Result[PreparedExcelRequest].success(
         PreparedExcelRequest(
-            request=request,
-            request_fingerprint=request_fingerprint,
+            request=validated.request,
+            request_fingerprint=validated.request_fingerprint,
             cursor_payload=decoded.data,
         )
     )
+
+
+def prepare_excel_request(
+    raw_request: JsonValue,
+    *,
+    cursor_secret: CursorSecret,
+) -> Result[PreparedExcelRequest]:
+    validated = validate_excel_request(raw_request)
+    if validated.data is None:
+        if validated.error is None:
+            return excel_failure("invalid_request")
+        return Result[PreparedExcelRequest].failure(
+            validated.error,
+            warnings=validated.warnings,
+            next_action=validated.next_action,
+        )
+    return bind_excel_cursor(validated.data, cursor_secret=cursor_secret)

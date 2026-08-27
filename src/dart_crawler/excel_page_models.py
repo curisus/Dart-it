@@ -98,14 +98,18 @@ class ExcelPage(BaseModel):
         dataset_id: str,
         info: ValidationInfo,
     ) -> str:
+        domain = info.data.get("domain")
         request_fingerprint = info.data.get("request_fingerprint")
         source_fingerprint = info.data.get("source_fingerprint")
-        if not isinstance(request_fingerprint, str) or not isinstance(
+        if not isinstance(domain, ExcelDataDomain) or not isinstance(
+            request_fingerprint,
+            str,
+        ) or not isinstance(
             source_fingerprint,
             str,
         ):
             return dataset_id
-        expected = _dataset_id(request_fingerprint, source_fingerprint)
+        expected = _dataset_id(domain, request_fingerprint, source_fingerprint)
         if dataset_id not in ("", expected):
             msg = "Excel page dataset id does not match its fingerprints"
             raise ValueError(msg)
@@ -194,8 +198,13 @@ def _normalize_rows(
     return tuple(normalized)
 
 
-def _dataset_id(request_fingerprint: str, source_fingerprint: str) -> str:
+def _dataset_id(
+    domain: ExcelDataDomain,
+    request_fingerprint: str,
+    source_fingerprint: str,
+) -> str:
     value: JsonObject = {
+        "domain": domain.value,
         "request_fingerprint": request_fingerprint,
         "schema_version": EXCEL_SCHEMA_VERSION,
         "source_fingerprint": source_fingerprint,

@@ -14,10 +14,29 @@ from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dart_crawler.crawler_service import CrawlerService
-from dart_crawler.http_client import HttpxClient
+from dart_crawler.excel_contract_errors import excel_failure
+from dart_crawler.excel_cursor import cursor_secret_from_environment
+from dart_crawler.excel_page_loader import execute_prepared_excel_page
+from dart_crawler.excel_page_models import ExcelPage
+from dart_crawler.excel_query_service import (
+    CrawlerServiceFactory,
+    ExcelQueryServiceFactory,
+)
+from dart_crawler.excel_request_validation import (
+    bind_excel_cursor,
+    validate_excel_request,
+)
+from dart_crawler.http_client import HttpClient, HttpxClient
 from dart_crawler.json_rpc_guard import JsonRpcRequestGuard
 from dart_crawler.query_limits import REMOTE_QUERY_LIMITS
-from dart_crawler.result import ErrorCode, ErrorInfo, Result, error_info
+from dart_crawler.remote_excel_tool import register_remote_excel_tool
+from dart_crawler.result import (
+    ErrorCode,
+    ErrorInfo,
+    JsonValue,
+    Result,
+    error_info,
+)
 from dart_crawler.tool_catalog import register_query_tools
 
 _API_KEY_HEADER: Final = "x-opendart-api-key"
@@ -33,13 +52,14 @@ T = TypeVar("T")
 
 
 def create_remote_server() -> MCPServer:
-    """Register the compact remote surface: the shared query tools only.
+    """Register shared queries and the remote-only JSON page loader.
 
     The export group is deliberately absent: a remote request has no writable
     filesystem to receive a file, so this surface returns data only.
     """
     mcp = MCPServer("dart_crawler", version="0.1.0")
     register_query_tools(mcp, _with_remote_service)
+    register_remote_excel_tool(mcp, _load_remote_excel_page)
     return mcp
 
 
@@ -113,6 +133,53 @@ def _with_remote_service(
                 limits=REMOTE_QUERY_LIMITS,
             )
         )
+
+
+def _load_remote_excel_page(
+    raw_request: JsonValue,
+    ctx: Context,
+) -> Result[ExcelPage]:
+    validated_result = validate_excel_request(raw_request)
+    validated = validated_result.data
+    if validated is None:
+        return _as_excel_page_failure(validated_result)
+    secret_result = cursor_secret_from_environment()
+    secret = secret_result.data
+    if secret is None:
+        return _as_excel_page_failure(secret_result)
+    prepared_result = bind_excel_cursor(validated, cursor_secret=secret)
+    prepared = prepared_result.data
+    if prepared is None:
+        return _as_excel_page_failure(prepared_result)
+    api_key_result = _api_key_from_request(ctx)
+    api_key = api_key_result.data
+    if api_key is None:
+        return _as_excel_page_failure(api_key_result)
+    with HttpxClient() as http_client:
+        return execute_prepared_excel_page(
+            prepared,
+            cursor_secret=secret,
+            factory=_excel_page_factory(api_key, http_client),
+        )
+
+
+def _excel_page_factory(
+    api_key: SecretStr,
+    http_client: HttpClient,
+) -> ExcelQueryServiceFactory:
+    return CrawlerServiceFactory(api_key, http_client)
+
+
+def _as_excel_page_failure[SourceT](
+    result: Result[SourceT],
+) -> Result[ExcelPage]:
+    if result.error is None:
+        return excel_failure("invalid_request")
+    return Result[ExcelPage].failure(
+        result.error,
+        warnings=result.warnings,
+        next_action=result.next_action,
+    )
 
 
 def _api_key_from_request(ctx: Context) -> Result[SecretStr]:

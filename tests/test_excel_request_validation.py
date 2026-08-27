@@ -1,11 +1,12 @@
 from pydantic import SecretBytes
 
+from dart_crawler.excel_company_arguments import SearchCompaniesArguments
 from dart_crawler.excel_cursor import (
     CursorSecret,
     ExcelCursorPayload,
     encode_excel_cursor,
-    fingerprint_excel_request,
 )
+from dart_crawler.excel_dataset_identity import normalized_request_fingerprint
 from dart_crawler.excel_page_models import ExcelDataDomain, ExcelLoadRequest
 from dart_crawler.excel_request_validation import prepare_excel_request
 from dart_crawler.result import JsonObject
@@ -46,7 +47,7 @@ def test_valid_request_reaches_cursor_validation_without_querying() -> None:
     # Given: a strict valid request carrying a malformed cursor.
     raw_request: JsonObject = {
         "domain": "search_companies",
-        "arguments": {"corp_name": "sample"},
+        "arguments": {"company_query": "sample"},
         "page_size": 1_000,
         "cursor": "not-a-cursor",
     }
@@ -71,12 +72,15 @@ def test_page_size_mismatch_is_independent_of_request_fingerprint() -> None:
     secret = CursorSecret(value=SecretBytes(b"s" * 32))
     original = ExcelLoadRequest(
         domain=ExcelDataDomain.SEARCH_COMPANIES,
-        arguments={"corp_name": "sample"},
+        arguments={"company_query": "sample"},
         page_size=1_000,
     )
     cursor = encode_excel_cursor(
         ExcelCursorPayload(
-            request_fingerprint=fingerprint_excel_request(original),
+            request_fingerprint=normalized_request_fingerprint(
+                original.domain,
+                SearchCompaniesArguments(company_query="sample"),
+            ),
             source_fingerprint="a" * 64,
             offset=1,
             page_index=1,

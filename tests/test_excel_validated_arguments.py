@@ -21,7 +21,7 @@ class ArgumentCase:
     expected: JsonObject
 
 
-_CASES = (
+EXCEL_ARGUMENT_CASES = (
     ArgumentCase(
         ExcelDataDomain.SEARCH_COMPANIES,
         {"company_query": "회사"},
@@ -159,8 +159,8 @@ _CASES = (
 
 @pytest.mark.parametrize(
     "case",
-    _CASES,
-    ids=tuple(case.domain.value for case in _CASES),
+    EXCEL_ARGUMENT_CASES,
+    ids=tuple(case.domain.value for case in EXCEL_ARGUMENT_CASES),
 )
 def test_every_domain_dumps_exact_default_complete_arguments(case: ArgumentCase) -> None:
     result = validate_excel_query(case.domain, case.raw)
@@ -170,7 +170,7 @@ def test_every_domain_dumps_exact_default_complete_arguments(case: ArgumentCase)
 
 
 def test_argument_matrix_is_exhaustive() -> None:
-    assert {case.domain for case in _CASES} == set(ExcelDataDomain)
+    assert {case.domain for case in EXCEL_ARGUMENT_CASES} == set(ExcelDataDomain)
 
 
 def test_all_registered_topics_validate_together_in_registry_order() -> None:

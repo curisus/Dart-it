@@ -32,18 +32,17 @@ def excel_failure[T](
             | "cursor_schema_mismatch"
             | "cursor_request_mismatch"
             | "cursor_page_size_mismatch"
-            | "cursor_position_invalid"
         ):
             code = ErrorCode.INVALID_INPUT
             next_action = _RESTART_ACTION
-        case "source_changed":
+        case "source_changed" | "cursor_position_invalid":
             code = ErrorCode.VALIDATION_FAILED
             next_action = _RESTART_ACTION
         case (
             "dataset_schema_exceeds_page_budget"
             | "row_exceeds_page_budget"
         ):
-            code = ErrorCode.INVALID_INPUT
+            code = ErrorCode.VALIDATION_FAILED
             next_action = _EXPORT_ACTION
         case unreachable:
             assert_never(unreachable)
@@ -56,4 +55,15 @@ def excel_failure[T](
         ),
         warnings=warnings,
         next_action=next_action,
+    )
+
+
+def excel_cursor_configuration_failure[T]() -> Result[T]:
+    return Result[T].failure(
+        error_info(
+            ErrorCode.CONFIG_ERROR,
+            "Excel 커서 서명 설정을 사용할 수 없습니다.",
+            retryable=False,
+            details={"reason": "invalid_request"},
+        )
     )

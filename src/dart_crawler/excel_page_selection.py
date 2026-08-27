@@ -148,7 +148,7 @@ def _success_result(
     page: ExcelPage,
     warnings: tuple[WarningInfo, ...],
 ) -> Result[ExcelPage]:
-    return Result[ExcelPage].success(page, warnings=warnings)
+    return Result[ExcelPage].success(page.model_copy(update={"warnings": warnings}))
 
 
 def _success_that_fits(

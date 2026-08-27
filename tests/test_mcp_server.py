@@ -41,11 +41,15 @@ async def test_mcp_registers_the_local_superset_and_returns_result_envelope(
         "get_registration_statements",
     }
     assert names == query_tools | {
+        "export_query_excel",
         "export_report_excel",
         "export_report_markdown",
     }
     assert len(query_tools) == 13
-    assert len(names) == 15
+    assert len(names) == 16
+    export_tool = next(tool for tool in listed if tool.name == "export_query_excel")
+    assert set(export_tool.input_schema["properties"]) == {"request"}
+    assert export_tool.input_schema.get("required", []) == []
     search_tool = next(tool for tool in listed if tool.name == "search_companies")
     assert "report_kind" not in search_tool.input_schema.get("required", [])
     assert search_tool.input_schema["properties"]["report_kind"]["anyOf"] == [

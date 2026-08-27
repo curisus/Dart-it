@@ -11,7 +11,10 @@ from typing import ClassVar, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretBytes, ValidationError
 
-from dart_crawler.excel_contract_errors import excel_failure
+from dart_crawler.excel_contract_errors import (
+    excel_cursor_configuration_failure,
+    excel_failure,
+)
 from dart_crawler.excel_page_models import (
     EXCEL_CURSOR_VERSION,
     EXCEL_SCHEMA_VERSION,
@@ -82,7 +85,10 @@ class _DuplicateJsonKeyError(Exception):
 
 
 def cursor_secret_from_environment() -> Result[CursorSecret]:
-    return cursor_secret_from_text(os.environ.get(_cursor_environment_variable()))
+    result = cursor_secret_from_text(os.environ.get(_cursor_environment_variable()))
+    if result.data is None:
+        return excel_cursor_configuration_failure()
+    return result
 
 
 def cursor_secret_from_text(raw_secret: str | None) -> Result[CursorSecret]:
