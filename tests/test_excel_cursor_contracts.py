@@ -23,6 +23,17 @@ def _secret() -> contracts.CursorSecret:
     return contracts.CursorSecret(value=SecretBytes(_SECRET_BYTES))
 
 
+def _signed_cursor_with_offset_digits(digit_count: int) -> str:
+    payload = contracts.ExcelCursorPayload(
+        request_fingerprint="a" * 64,
+        source_fingerprint="b" * 64,
+        offset=int("7" * digit_count),
+        page_index=1,
+        page_size=1_000,
+    )
+    return contracts.encode_excel_cursor(payload, secret=_secret())
+
+
 def _reason(result: Result[T]) -> str:
     assert result.data is None
     assert result.warnings == ()
@@ -75,11 +86,17 @@ def test_cursor_round_trip_uses_only_the_canonical_signed_payload() -> None:
 
 def test_cursor_reports_schema_mismatch_before_other_binding_mismatches() -> None:
     # Given: a validly signed cursor whose schema, request, and page size all differ.
-    raw_payload = (
-        b'{"offset":1,"page_index":1,"page_size":1,'
-        b'"request_fingerprint":"' + (b"c" * 64) + b'",'
-        b'"schema_version":2,"source_fingerprint":"' + (b"d" * 64) + b'",'
-        b'"version":2}'
+    raw_payload = b"".join(
+        [
+            b'{"offset":1,"page_index":1,"page_size":1,',
+            b'"request_fingerprint":"',
+            b"c" * 64,
+            b'",',
+            b'"schema_version":2,"source_fingerprint":"',
+            b"d" * 64,
+            b'",',
+            b'"version":2}',
+        ]
     )
     binding = contracts.CursorBinding(
         request_fingerprint="a" * 64,
@@ -114,12 +131,18 @@ def test_cursor_rejects_tampering_duplicate_keys_and_oversized_input() -> None:
     )
     token = contracts.encode_excel_cursor(payload, secret=secret)
     tampered = f"{token[:-1]}{'A' if token[-1] != 'A' else 'B'}"
-    duplicate = _signed_token(
-        b'{"offset":1,"page_index":1,"page_size":1000,'
-        b'"request_fingerprint":"' + (b"a" * 64) + b'",'
-        b'"schema_version":1,"source_fingerprint":"' + (b"b" * 64) + b'",'
-        b'"version":1,"version":1}'
-    )
+    duplicate = _signed_token(b"".join(
+        [
+            b'{"offset":1,"page_index":1,"page_size":1000,',
+            b'"request_fingerprint":"',
+            b"a" * 64,
+            b'",',
+            b'"schema_version":1,"source_fingerprint":"',
+            b"b" * 64,
+            b'",',
+            b'"version":1,"version":1}',
+        ]
+    ))
     oversized = _signed_token(b"{" + (b" " * 4_096) + b"}")
 
     # When: each hostile token is decoded before any upstream query.
@@ -135,6 +158,54 @@ def test_cursor_rejects_tampering_duplicate_keys_and_oversized_input() -> None:
         "invalid_cursor",
     )
     assert all(result.next_action == "커서 없이 첫 페이지부터 다시 요청하세요." for result in results)
+
+
+def test_cursor_accepts_exactly_4096_utf8_transport_bytes() -> None:
+    # Given: a normally signed cursor whose transport representation is exactly 4096 bytes.
+    token = _signed_cursor_with_offset_digits(2_788)
+    binding = contracts.CursorBinding(
+        request_fingerprint="a" * 64,
+        page_size=1_000,
+    )
+
+    # When: the exact boundary cursor is decoded.
+    result = contracts.decode_excel_cursor(token, secret=_secret(), binding=binding)
+
+    # Then: the otherwise valid cursor is accepted at the inclusive boundary.
+    assert len(token.encode("utf-8")) == 4_096
+    assert result.ok is True
+
+
+def test_cursor_rejects_4097_byte_transport_string() -> None:
+    # Given: a cursor transport string one byte beyond the configured boundary.
+    token = "a" * 4_097
+    binding = contracts.CursorBinding(
+        request_fingerprint="a" * 64,
+        page_size=1_000,
+    )
+
+    # When: the oversized transport string is decoded.
+    result = contracts.decode_excel_cursor(token, secret=_secret(), binding=binding)
+
+    # Then: it is rejected as an invalid cursor.
+    assert len(token.encode("utf-8")) == 4_097
+    assert _reason(result) == "invalid_cursor"
+
+
+def test_cursor_rejects_normally_signed_transport_string_over_4096_bytes() -> None:
+    # Given: a normally signed cursor whose encoded transport string is 4098 bytes.
+    token = _signed_cursor_with_offset_digits(2_789)
+    binding = contracts.CursorBinding(
+        request_fingerprint="a" * 64,
+        page_size=1_000,
+    )
+
+    # When: the signed oversized cursor is decoded.
+    result = contracts.decode_excel_cursor(token, secret=_secret(), binding=binding)
+
+    # Then: transport size rejects it before payload processing.
+    assert len(token.encode("utf-8")) == 4_098
+    assert _reason(result) == "invalid_cursor"
 
 
 def test_cursor_binding_reports_request_before_page_size_mismatch() -> None:

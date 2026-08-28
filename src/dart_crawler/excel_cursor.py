@@ -7,9 +7,16 @@ import hmac
 import json
 import os
 from dataclasses import dataclass
-from typing import ClassVar, Final, Literal
+from typing import ClassVar, Final, Literal, override
 
-from pydantic import BaseModel, ConfigDict, Field, SecretBytes, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretBytes,
+    TypeAdapter,
+    ValidationError,
+)
 
 from dart_crawler.excel_contract_errors import (
     excel_cursor_configuration_failure,
@@ -26,6 +33,7 @@ from dart_crawler.result import JsonObject, JsonValue, Result
 MAX_CURSOR_DECODED_BYTES: Final = 4_096
 _FINGERPRINT_PATTERN: Final = r"^[0-9a-f]{64}$"
 _HMAC_SHA256_BYTES: Final = 32
+_JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
 
 
 class CursorSecret(BaseModel):
@@ -80,6 +88,7 @@ class _ExcelCursorWirePayload(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class _DuplicateJsonKeyError(Exception):
+    @override
     def __str__(self) -> str:
         return "duplicate JSON key"
 
@@ -162,6 +171,11 @@ def decode_excel_cursor(
 
 
 def _decode_token(token: str) -> tuple[bytes, bytes] | None:
+    try:
+        if len(token.encode("utf-8")) > MAX_CURSOR_DECODED_BYTES:
+            return None
+    except UnicodeEncodeError:
+        return None
     components = token.split(".")
     if len(components) != 2:
         return None
@@ -179,7 +193,9 @@ def _decode_token(token: str) -> tuple[bytes, bytes] | None:
 def _parse_cursor_payload(payload_bytes: bytes) -> _ExcelCursorWirePayload | None:
     try:
         decoded = payload_bytes.decode("utf-8")
-        value = json.loads(decoded, object_pairs_hook=_unique_json_object)
+        value = _JSON_VALUE_ADAPTER.validate_python(
+            json.loads(decoded, object_pairs_hook=_unique_json_object)
+        )
         return _ExcelCursorWirePayload.model_validate(value)
     except (
         UnicodeDecodeError,
