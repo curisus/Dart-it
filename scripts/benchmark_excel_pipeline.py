@@ -27,6 +27,18 @@ _PAGE_WIRE_LIMIT: Final = 1.0
 _XLSX_LIMIT: Final = 15.0
 _STATELESS_LIMIT: Final = 11.0
 _RSS_LIMIT: Final = 512.0
+_WORKER_ERROR_PREFIX: Final = "benchmark_worker_error="
+_ALLOWED_WORKER_ERROR_REASONS: Final[frozenset[str]] = frozenset(
+    {
+        "normalization_failed",
+        "page_selection_failed",
+        "peak_rss_measurement_failed",
+        "powershell_not_found",
+        "wire_measurement_changed",
+        "wire_serialization_failed",
+        "xlsx_generation_failed",
+    }
+)
 
 
 class Seconds(BaseModel):
@@ -139,6 +151,16 @@ def _worker_sample(worker: Path, row_count: int, column_count: int) -> WorkerSam
         text=True,
     )
     if completed.returncode != 0:
+        controlled_errors = tuple(
+            line.removeprefix(_WORKER_ERROR_PREFIX)
+            for line in completed.stderr.splitlines()
+            if line.startswith(_WORKER_ERROR_PREFIX)
+        )
+        if (
+            len(controlled_errors) == 1
+            and controlled_errors[0] in _ALLOWED_WORKER_ERROR_REASONS
+        ):
+            _fail(f"worker_failed:{controlled_errors[0]}")
         _fail("worker_failed")
     return WorkerSample.model_validate_json(completed.stdout)
 
@@ -237,7 +259,7 @@ def main() -> int:
     )
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     serialized = report.model_dump_json(indent=2)
-    arguments.output.write_text(serialized + "\n", encoding="utf-8")
+    _ = arguments.output.write_text(serialized + "\n", encoding="utf-8")
     print(serialized)
     return 0 if report.passed else 1
 

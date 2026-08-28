@@ -153,7 +153,7 @@ def _select_and_serialize(dataset: NormalizedExcelDataset) -> int:
 
 
 def _peak_rss_mib() -> float:
-    powershell = shutil.which("powershell.exe")
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
     if powershell is None:
         _fail("powershell_not_found")
     completed = subprocess.run(  # noqa: S603
@@ -240,7 +240,11 @@ def main() -> int:
     _ = parser.add_argument("--rows", type=int, required=True)
     _ = parser.add_argument("--columns", type=int, required=True)
     arguments = WorkerArguments.model_validate(vars(parser.parse_args()))
-    sample = run_worker(arguments.rows, arguments.columns)
+    try:
+        sample = run_worker(arguments.rows, arguments.columns)
+    except BenchmarkError as error:
+        print(f"benchmark_worker_error={error}", file=sys.stderr)
+        return 2
     print(json.dumps(sample, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
     return 0
 
