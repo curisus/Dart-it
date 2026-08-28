@@ -1,4 +1,5 @@
-from typing import Final
+from collections.abc import Callable
+from typing import ClassVar, Final
 
 from pydantic import Field, field_validator
 
@@ -32,7 +33,9 @@ class FinancialPeriodArguments(StrictExcelArguments):
     bsns_year: int = Field(ge=MIN_BSNS_YEAR, strict=True)
     reprt_code: str
 
-    validate_corp_code_field = field_validator("corp_code")(validate_corp_code)
+    validate_corp_code_field: ClassVar[Callable[[str], str]] = field_validator(
+        "corp_code",
+    )(validate_corp_code)
 
     @field_validator("reprt_code")
     @classmethod
@@ -54,7 +57,9 @@ class CompanySelectionArguments(StrictExcelArguments):
     bsns_year: int = Field(ge=MIN_BSNS_YEAR, strict=True)
     reprt_code: str
 
-    validate_unique_corp_codes = field_validator("corp_codes")(validate_unique)
+    validate_unique_corp_codes: ClassVar[
+        Callable[[tuple[str, ...]], tuple[str, ...]]
+    ] = field_validator("corp_codes")(validate_unique)
 
     @field_validator("corp_codes")
     @classmethod

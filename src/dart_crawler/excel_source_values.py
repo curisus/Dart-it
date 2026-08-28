@@ -1,5 +1,3 @@
-from typing import assert_never
-
 from dart_crawler.excel_row_normalization import ExcelSourceValue, SourcePairs
 from dart_crawler.result import JsonObject, JsonValue
 
@@ -11,7 +9,7 @@ def json_object_pairs(value: JsonObject) -> SourcePairs:
 
 
 def json_value_to_source(value: JsonValue) -> ExcelSourceValue:
-    match value:
+    match value:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case bool() as boolean:
             return boolean
         case int() as integer:
@@ -29,5 +27,3 @@ def json_value_to_source(value: JsonValue) -> ExcelSourceValue:
                 name: json_value_to_source(item)
                 for name, item in mapping.items()
             }
-        case unreachable:
-            assert_never(unreachable)

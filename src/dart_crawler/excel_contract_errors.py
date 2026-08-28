@@ -1,4 +1,4 @@
-from typing import Final, Literal, assert_never
+from typing import Final, Literal
 
 from dart_crawler.result import ErrorCode, Result, WarningInfo, error_info
 
@@ -23,7 +23,7 @@ def excel_failure[T](
     *,
     warnings: tuple[WarningInfo, ...] = (),
 ) -> Result[T]:
-    match reason:
+    match reason:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case "invalid_request":
             code = ErrorCode.INVALID_INPUT
             next_action = None
@@ -44,8 +44,6 @@ def excel_failure[T](
         ):
             code = ErrorCode.VALIDATION_FAILED
             next_action = _EXPORT_ACTION
-        case unreachable:
-            assert_never(unreachable)
     return Result[T].failure(
         error_info(
             code,

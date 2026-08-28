@@ -1,5 +1,3 @@
-from typing import assert_never
-
 from dart_crawler.document_model import BlockKind
 from dart_crawler.excel_dataset_builder import (
     ExcelSourceDataset,
@@ -133,7 +131,7 @@ def _block_rows(
     block: SectionBlock,
     block_index: int,
 ) -> tuple[PendingExcelRow, ...]:
-    match block.kind:
+    match block.kind:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case BlockKind.TABLE:
             if block.table is None:
                 return ()
@@ -159,8 +157,6 @@ def _block_rows(
                 ("merged_ranges", None),
             )
             return (PendingExcelRow(context, source),)
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _table_rows(

@@ -32,3 +32,5 @@ def register_remote_excel_tool(
         ctx: Context,
     ) -> Annotated[CallToolResult, Result[ExcelPage]]:
         return excel_result_to_call_tool_result(runner(request, ctx))
+
+    _ = load_excel_page

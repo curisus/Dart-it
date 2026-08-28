@@ -53,9 +53,7 @@ class HardLinkPublished:
     file: OwnedFile
 
 
-type LinkOutcome = (
-    HardLinkPublished | CandidateUnavailable | FileOperationFailed
-)
+type LinkOutcome = HardLinkPublished | CandidateUnavailable | FileOperationFailed
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,11 +83,7 @@ class ExcelPublicationFileOps(Protocol):
 class SystemExcelPublicationFileOps:
     def acquire_lock(self, path: Path) -> LockOutcome:
         try:
-            descriptor = os.open(
-                path,
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                0o600,
-            )
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
             return CandidateUnavailable()
         except OSError:
@@ -108,11 +102,7 @@ class SystemExcelPublicationFileOps:
 
     def create_temp(self, directory: Path, prefix: str) -> TempOutcome:
         try:
-            descriptor, raw_path = tempfile.mkstemp(
-                dir=directory,
-                prefix=prefix,
-                suffix=".xlsx",
-            )
+            descriptor, raw_path = tempfile.mkstemp(dir=directory, prefix=prefix, suffix=".xlsx")
         except OSError:
             return FileOperationFailed()
         path = Path(raw_path)
@@ -150,18 +140,11 @@ class SystemExcelPublicationFileOps:
             current_source = _capture_regular_path(source)
             if published is None:
                 outcome = FileOperationFailed()
-            elif (
-                published.identity == opened.identity
-                and current_source == opened
-            ):
+            elif published.identity == opened.identity and current_source == opened:
                 published_file = published
                 outcome = HardLinkPublished(file=published)
             else:
-                _unlink_published_if_source_link(
-                    published,
-                    opened,
-                    current_source,
-                )
+                _unlink_published_if_source_link(published, opened, current_source)
                 outcome = FileOperationFailed()
         try:
             os.close(descriptor)
@@ -175,16 +158,10 @@ class SystemExcelPublicationFileOps:
         return _unlink_matching_file(file)
 
 
-SYSTEM_EXCEL_PUBLICATION_FILE_OPS: Final[ExcelPublicationFileOps] = (
-    SystemExcelPublicationFileOps()
-)
+SYSTEM_EXCEL_PUBLICATION_FILE_OPS: Final[ExcelPublicationFileOps] = SystemExcelPublicationFileOps()
 
 
-def publish_owned_link(
-    file_ops: ExcelPublicationFileOps,
-    source: OwnedFile,
-    destination: Path,
-) -> LinkOutcome:
+def publish_owned_link(file_ops: ExcelPublicationFileOps, source: OwnedFile, destination: Path) -> LinkOutcome:
     if not is_current_regular_file(source):
         return FileOperationFailed()
     outcome = file_ops.publish_link(source.path, destination)
@@ -203,10 +180,7 @@ def _capture_owned_file(path: Path, descriptor: int) -> OwnedFile | None:
         return None
     if not _is_regular_non_reparse(status):
         return None
-    return OwnedFile(
-        path=path,
-        identity=_identity(status),
-    )
+    return OwnedFile(path=path, identity=_identity(status))
 
 
 def _capture_regular_path(path: Path) -> OwnedFile | None:
@@ -225,8 +199,7 @@ def _unlink_published_if_source_link(
     current_source: OwnedFile | None,
 ) -> None:
     tied_to_source = published.identity == opened.identity or (
-        current_source is not None
-        and published.identity == current_source.identity
+        current_source is not None and published.identity == current_source.identity
     )
     if tied_to_source:
         _ = _unlink_matching_file(published)
@@ -246,20 +219,88 @@ def _is_regular_non_reparse(status: os.stat_result) -> bool:
         return False
     if sys.platform != "win32":
         return True
-    return not bool(
-        status.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
-    )
+    return not bool(status.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def _unlink_matching_file(file: OwnedFile) -> CleanupOutcome:
+    if sys.platform == "win32":
+        try:
+            status = os.lstat(file.path)
+        except FileNotFoundError:
+            return CleanupCompleted()
+        except OSError:
+            return CleanupFailed()
+        if _identity(status) != file.identity or not _is_regular_non_reparse(status):
+            return CleanupCompleted()
+        return _quarantine_matching_file(file)
+    try:
+        with file.path.open("rb") as source:
+            opened = _capture_owned_file(file.path, source.fileno())
+            if opened is None:
+                return CleanupFailed()
+            if opened.identity != file.identity or not is_current_regular_file(opened):
+                return CleanupCompleted()
+            return _quarantine_matching_file(file)
+    except FileNotFoundError:
+        return CleanupCompleted()
+    except OSError:
+        return CleanupFailed()
+
+
+def _quarantine_matching_file(file: OwnedFile) -> CleanupOutcome:
+    quarantine = _create_delete_quarantine(file.path)
+    if quarantine is None:
+        return CleanupFailed()
+    try:
+        os.replace(file.path, quarantine.path)
+    except FileNotFoundError:
+        return _unlink_quarantined_file(quarantine)
+    except OSError:
+        _ = _unlink_quarantined_file(quarantine)
+        return CleanupFailed()
+    quarantined = _capture_regular_path(quarantine.path)
+    if quarantined is None:
+        return CleanupFailed()
+    if quarantined.identity == file.identity:
+        return _unlink_quarantined_file(quarantined)
+    return _restore_unowned_quarantine(quarantined, file.path)
+
+
+def _create_delete_quarantine(path: Path) -> OwnedFile | None:
+    try:
+        descriptor, raw_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.delete-")
+    except OSError:
+        return None
+    quarantine = Path(raw_path)
+    owned = _capture_owned_file(quarantine, descriptor)
+    try:
+        os.close(descriptor)
+    except OSError:
+        if owned is not None:
+            _ = _unlink_quarantined_file(owned)
+        return None
+    return owned
+
+
+def _restore_unowned_quarantine(quarantine: OwnedFile, original_path: Path) -> CleanupOutcome:
+    try:
+        os.link(quarantine.path, original_path)
+    except OSError:
+        return CleanupFailed()
+    restored = _capture_regular_path(original_path)
+    if restored is None or restored.identity != quarantine.identity:
+        return CleanupFailed()
+    return _unlink_quarantined_file(quarantine)
+
+
+def _unlink_quarantined_file(file: OwnedFile) -> CleanupOutcome:
     try:
         status = os.lstat(file.path)
     except FileNotFoundError:
         return CleanupCompleted()
     except OSError:
         return CleanupFailed()
-    current = _identity(status)
-    if current != file.identity:
+    if _identity(status) != file.identity:
         return CleanupCompleted()
     try:
         file.path.unlink()

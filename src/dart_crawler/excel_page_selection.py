@@ -159,12 +159,6 @@ def _success_that_fits(
     report = measure_excel_result_wire(with_warnings)
     if report.fits_strictly(EXCEL_PAGE_BUDGET_BYTES):
         return with_warnings
-    if not warnings:
-        return None
-    without_warnings = _success_result(page, ())
-    report = measure_excel_result_wire(without_warnings)
-    if report.fits_strictly(EXCEL_PAGE_BUDGET_BYTES):
-        return without_warnings
     return None
 
 
@@ -177,5 +171,5 @@ def _budget_failure(
     if report.fits_strictly(EXCEL_PAGE_BUDGET_BYTES):
         return with_warnings
     without_warnings: Result[ExcelPage] = excel_failure(reason)
-    measure_excel_result_wire(without_warnings)
+    _ = measure_excel_result_wire(without_warnings)
     return without_warnings

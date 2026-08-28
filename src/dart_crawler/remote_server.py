@@ -8,7 +8,7 @@ from typing import Final, TypeVar
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import SecretStr
+from pydantic import SecretStr, StrictStr, TypeAdapter, ValidationError
 from starlette.applications import Starlette
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -49,6 +49,10 @@ _MISSING_KEY_NEXT_ACTION: Final = (
 )
 
 T = TypeVar("T")
+_QUERY_PARAMS_ADAPTER: Final[TypeAdapter[Mapping[str, str]]] = TypeAdapter(
+    Mapping[str, str]
+)
+_SCOPE_STRING_ADAPTER: Final[TypeAdapter[str]] = TypeAdapter(StrictStr)
 
 
 def create_remote_server() -> MCPServer:
@@ -100,14 +104,18 @@ class _PostOnlyEndpoint:
     """
 
     def __init__(self, app: ASGIApp, *, path: str) -> None:
-        self._app = app
-        self._path = path
+        self._app: ASGIApp = app
+        self._path: str = path
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
-            method: str = scope["method"]
-            request_path: str = scope["path"]
-            if request_path == self._path and method != "POST":
+            method = _scope_string(scope, "method")
+            request_path = _scope_string(scope, "path")
+            if (
+                method is not None
+                and request_path == self._path
+                and method != "POST"
+            ):
                 refusal = Response(status_code=405, headers={"Allow": "POST"})
                 await refusal(scope, receive, send)
                 return
@@ -121,7 +129,7 @@ def _with_remote_service(
 ) -> Result[T]:
     api_key = _api_key_from_request(ctx)
     if not api_key.ok or api_key.data is None:
-        return Result.failure(
+        return Result[T].failure(
             api_key.error if api_key.error is not None else _missing_key_error(),
             next_action=api_key.next_action,
         )
@@ -195,7 +203,7 @@ def _api_key_from_request(ctx: Context) -> Result[SecretStr]:
         return from_headers
     query_key = _query_parameter(ctx, _API_KEY_QUERY_PARAM)
     if query_key:
-        return Result.success(SecretStr(query_key))
+        return Result[SecretStr].success(SecretStr(query_key))
     return _missing_key()
 
 
@@ -207,8 +215,10 @@ def _query_parameter(ctx: Context, name: str) -> str:
         # ctx.headers raises this first, so the guard only protects direct
         # calls; stdio reaches the getattr below with request=None instead.
         return ""
-    params = getattr(request, "query_params", None)
-    if not isinstance(params, Mapping):
+    raw_params = getattr(request, "query_params", None)
+    try:
+        params = _QUERY_PARAMS_ADAPTER.validate_python(raw_params)
+    except ValidationError:
         return ""
     value = params.get(name)
     return value.strip() if isinstance(value, str) else ""
@@ -225,14 +235,14 @@ def _api_key_from_headers(headers: Mapping[str, str] | None) -> Result[SecretStr
         return _missing_key()
     direct = next(_nonblank_header_values(headers, _API_KEY_HEADER), "")
     if direct:
-        return Result.success(SecretStr(direct))
+        return Result[SecretStr].success(SecretStr(direct))
     for authorization in _nonblank_header_values(headers, _AUTHORIZATION_HEADER):
         components = authorization.split(maxsplit=1)
         if len(components) != 2:
             continue
         scheme, credentials = components
         if scheme.casefold() == _BEARER_SCHEME and credentials:
-            return Result.success(SecretStr(credentials))
+            return Result[SecretStr].success(SecretStr(credentials))
     return _missing_key()
 
 
@@ -247,8 +257,15 @@ def _nonblank_header_values(
                 yield normalized
 
 
+def _scope_string(scope: Scope, key: str) -> str | None:
+    try:
+        return _SCOPE_STRING_ADAPTER.validate_python(scope.get(key))
+    except ValidationError:
+        return None
+
+
 def _missing_key() -> Result[SecretStr]:
-    return Result.failure(
+    return Result[SecretStr].failure(
         _missing_key_error(),
         next_action=_MISSING_KEY_NEXT_ACTION,
     )

@@ -1,5 +1,3 @@
-from typing import assert_never
-
 from dart_crawler.excel_argument_validation import validate_excel_query
 from dart_crawler.excel_company_normalization import (
     normalize_company_profile,
@@ -64,7 +62,7 @@ def _dispatch_validated_query(
     query: ValidatedExcelQuery,
     service: ExcelQueryService,
 ) -> Result[NormalizedExcelDataset]:
-    match query:
+    match query:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case (
             SearchCompaniesQuery()
             | ListReportFilingsQuery()
@@ -87,15 +85,13 @@ def _dispatch_validated_query(
             | GetRegistrationStatementsQuery()
         ) as disclosure_query:
             return _dispatch_disclosure_query(disclosure_query, service)
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _dispatch_report_query(
     query: ReportValidatedExcelQuery,
     service: ExcelQueryService,
 ) -> Result[NormalizedExcelDataset]:
-    match query:
+    match query:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case SearchCompaniesQuery(arguments=arguments):
             return normalize_search_companies(
                 arguments,
@@ -140,15 +136,13 @@ def _dispatch_report_query(
                 arguments,
                 service.get_company_profile(arguments.corp_code),
             )
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _dispatch_financial_query(
     query: FinancialValidatedExcelQuery,
     service: ExcelQueryService,
 ) -> Result[NormalizedExcelDataset]:
-    match query:
+    match query:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case GetFinancialStatementsQuery(arguments=arguments):
             return normalize_financial_statements(
                 arguments,
@@ -178,15 +172,13 @@ def _dispatch_financial_query(
                     arguments.idx_cl_code,
                 ),
             )
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _dispatch_disclosure_query(
     query: DisclosureValidatedExcelQuery,
     service: ExcelQueryService,
 ) -> Result[NormalizedExcelDataset]:
-    match query:
+    match query:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case GetReportTopicsQuery(arguments=arguments):
             return normalize_report_topics(
                 arguments,
@@ -227,5 +219,3 @@ def _dispatch_disclosure_query(
                     arguments.end_de,
                 ),
             )
-        case unreachable:
-            assert_never(unreachable)

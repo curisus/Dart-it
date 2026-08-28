@@ -1,5 +1,5 @@
 import re
-from typing import Annotated, Final, Never
+from typing import Annotated, Final, LiteralString, Never
 
 from pydantic import BeforeValidator
 from pydantic_core import PydanticCustomError
@@ -12,17 +12,18 @@ _DATE_PATTERN: Final = re.compile(r"^[0-9]{8}$")
 _SECTION_ID_PATTERN: Final = re.compile(r"^s[0-9]{3,}-[a-z_]+$")
 
 
-def argument_validation_failure(code: str, message: str) -> Never:
+def argument_validation_failure(
+    code: LiteralString,
+    message: LiteralString,
+) -> Never:
     error = PydanticCustomError(code, message)
     raise error
 
 
 def json_array_as_tuple(value: JsonValue) -> tuple[JsonValue, ...]:
-    match value:
-        case list() as items:
-            return tuple(items)
-        case _:
-            argument_validation_failure("json_array", "value must be a JSON array")
+    if isinstance(value, list):
+        return tuple(value)
+    return argument_validation_failure("json_array", "value must be a JSON array")
 
 
 JsonStringTuple = Annotated[

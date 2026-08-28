@@ -1,4 +1,5 @@
-from typing import Final, Self
+from collections.abc import Callable
+from typing import ClassVar, Final, Self
 
 from pydantic import Field, field_validator, model_validator
 
@@ -22,7 +23,9 @@ class ListReportSectionsArguments(StrictExcelArguments):
     rcept_no: str
     attachment_id: str = Field(min_length=1)
 
-    validate_rcept_no_field = field_validator("rcept_no")(validate_rcept_no)
+    validate_rcept_no_field: ClassVar[Callable[[str], str]] = field_validator(
+        "rcept_no",
+    )(validate_rcept_no)
 
 
 class GetReportSectionsArguments(StrictExcelArguments):
@@ -31,9 +34,15 @@ class GetReportSectionsArguments(StrictExcelArguments):
     section_ids: JsonStringTuple = ()
     section_kinds: JsonStringTuple = ()
 
-    validate_rcept_no_field = field_validator("rcept_no")(validate_rcept_no)
-    validate_section_ids = field_validator("section_ids")(validate_unique)
-    validate_section_kinds_unique = field_validator("section_kinds")(
+    validate_rcept_no_field: ClassVar[Callable[[str], str]] = field_validator(
+        "rcept_no",
+    )(validate_rcept_no)
+    validate_section_ids: ClassVar[
+        Callable[[tuple[str, ...]], tuple[str, ...]]
+    ] = field_validator("section_ids")(validate_unique)
+    validate_section_kinds_unique: ClassVar[
+        Callable[[tuple[str, ...]], tuple[str, ...]]
+    ] = field_validator("section_kinds")(
         validate_unique
     )
 

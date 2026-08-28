@@ -132,5 +132,5 @@ def _postquery_failure(
     ):
         return with_warnings
     without_warnings: Result[ExcelPage] = excel_failure(reason)
-    measure_excel_result_wire(without_warnings)
+    _ = measure_excel_result_wire(without_warnings)
     return without_warnings

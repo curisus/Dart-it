@@ -1,5 +1,8 @@
+import os
 from pathlib import Path
 from typing import override
+
+import pytest
 
 from dart_crawler.excel_publication_file_ops import (
     SYSTEM_EXCEL_PUBLICATION_FILE_OPS,
@@ -175,3 +178,27 @@ class CleanupFailurePublicationOps(RecordingPublicationOps):
         if (is_lock and self._fail_lock) or (not is_lock and self._fail_temp):
             return CleanupFailed()
         return self._delegate.unlink_owned(file)
+
+
+def capture_owned_file(path: Path) -> OwnedFile:
+    status = path.lstat()
+    return OwnedFile(
+        path=path,
+        identity=FileIdentity(device=status.st_dev, inode=status.st_ino),
+    )
+
+
+def install_move_other_owner_race(
+    monkeypatch: pytest.MonkeyPatch,
+    victim: Path,
+    moved_payload: bytes,
+) -> None:
+    real_replace = os.replace
+
+    def move_other_owner(source_path: Path, destination_path: Path) -> None:
+        if source_path == victim:
+            source_path.unlink()
+            _ = source_path.write_bytes(moved_payload)
+        real_replace(source_path, destination_path)
+
+    monkeypatch.setattr(os, "replace", move_other_owner)

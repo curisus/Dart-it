@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, override
 
+from pydantic import StrictBytes, StrictStr, TypeAdapter, ValidationError
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -11,10 +12,14 @@ from dart_crawler.result import JsonObject, JsonValue
 
 INVALID_JSON_RPC_RESPONSE: Final = b'{"error":"invalid_json_rpc_request"}'
 MAX_REQUEST_ID_BYTES: Final = 1_024
+_JSON_VALUE_ADAPTER: Final[TypeAdapter[JsonValue]] = TypeAdapter(JsonValue)
+_BODY_ADAPTER: Final[TypeAdapter[bytes]] = TypeAdapter(StrictBytes)
+_SCOPE_STRING_ADAPTER: Final[TypeAdapter[str]] = TypeAdapter(StrictStr)
 
 
 @dataclass(frozen=True, slots=True)
 class _DuplicateJsonKeyError(Exception):
+    @override
     def __str__(self) -> str:
         return "duplicate JSON key"
 
@@ -25,8 +30,8 @@ class _NonStandardJsonNumberError(ValueError):
 
 class _BodyReceive:
     def __init__(self, body: bytes) -> None:
-        self._body = body
-        self._sent = False
+        self._body: bytes = body
+        self._sent: bool = False
 
     async def __call__(self) -> Message:
         if self._sent:
@@ -37,15 +42,18 @@ class _BodyReceive:
 
 class JsonRpcRequestGuard:
     def __init__(self, app: ASGIApp, *, path: str) -> None:
-        self._app = app
-        self._path = path
+        self._app: ASGIApp = app
+        self._path: str = path
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
-        method: str = scope["method"]
-        request_path: str = scope["path"]
+        method = _scope_string(scope, "method")
+        request_path = _scope_string(scope, "path")
+        if method is None or request_path is None:
+            await self._app(scope, receive, send)
+            return
         if method != "POST" or request_path != self._path:
             await self._app(scope, receive, send)
             return
@@ -67,8 +75,9 @@ async def _read_body(receive: Receive) -> bytes | None:
         message = await receive()
         if message["type"] == "http.disconnect":
             return None
-        chunk = message.get("body", b"")
-        if not isinstance(chunk, bytes):
+        try:
+            chunk = _BODY_ADAPTER.validate_python(message.get("body", b""))
+        except ValidationError:
             return None
         chunks.append(chunk)
         if message.get("more_body") is not True:
@@ -95,17 +104,25 @@ def _is_valid_json_rpc_request(body: bytes) -> bool:
 
 def _parse_json(body: bytes) -> JsonValue | None:
     try:
-        value: JsonValue = json.loads(
-            body,
-            object_pairs_hook=_unique_json_object,
-            parse_constant=_reject_nonstandard_json_number,
+        return _JSON_VALUE_ADAPTER.validate_python(
+            json.loads(
+                body,
+                object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_nonstandard_json_number,
+            )
         )
     except (
         ValueError,
         _DuplicateJsonKeyError,
     ):
         return None
-    return value
+
+
+def _scope_string(scope: Scope, key: str) -> str | None:
+    try:
+        return _SCOPE_STRING_ADAPTER.validate_python(scope.get(key))
+    except ValidationError:
+        return None
 
 
 def _unique_json_object(pairs: list[tuple[str, JsonValue]]) -> JsonObject:

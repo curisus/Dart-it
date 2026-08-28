@@ -158,8 +158,8 @@ def test_schema_only_probe_can_fail_before_row_measurement() -> None:
     assert "export_query_excel" in (result.next_action or "")
 
 
-def test_warning_only_overflow_returns_empty_success_without_warnings() -> None:
-    # Given: an empty dataset whose schema fits but ordered source warnings do not.
+def test_warning_only_overflow_returns_typed_schema_failure() -> None:
+    # Given: an empty dataset whose schema plus ordered source warnings exceed the budget.
     warnings = (
         WarningInfo(
             code=WarningCode.PARTIAL_COLLECTION,
@@ -168,17 +168,13 @@ def test_warning_only_overflow_returns_empty_success_without_warnings() -> None:
     )
     dataset = _dataset((), warnings=warnings)
 
-    # When: the completed empty page is selected through the full-wire oracle.
+    # When: the row-free schema probe is selected through the full-wire oracle.
     result = select_excel_page(_selection(dataset, page_size=1))
 
-    # Then: warning overflow is not misclassified as schema overflow.
-    assert result.ok is True
-    page = result.data
-    assert page is not None
-    assert page.rows == ()
-    assert page.returned_rows == 0
-    assert page.next_cursor is None
+    # Then: warning-only metadata overflow remains a typed schema failure.
+    assert _failure_reason(result) == "dataset_schema_exceeds_page_budget"
     assert result.warnings == ()
+    assert "export_query_excel" in (result.next_action or "")
     assert measure_excel_result_wire(result).fits_strictly(EXCEL_PAGE_BUDGET_BYTES)
 
 

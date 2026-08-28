@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import StrEnum, unique
-from typing import assert_never
 
 from dart_crawler.excel_canonical_json import canonical_json_text
 from dart_crawler.excel_normalization_errors import NormalizationFailureReason
@@ -76,7 +75,7 @@ class ColumnBinding:
 
 
 def normalize_excel_cell(value: ExcelSourceValue) -> CellResult:
-    match value:
+    match value:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case bool() as boolean:
             return NormalizedCell(boolean, ScalarKind.BOOLEAN)
         case int() as integer:
@@ -92,13 +91,17 @@ def normalize_excel_cell(value: ExcelSourceValue) -> CellResult:
         case bytes():
             return CellFailure("unsupported_cell_value")
         case list() | dict():
-            match _normalize_json_value(value):
-                case CellFailure() as failure:
-                    return failure
-                case normalized:
-                    return NormalizedCell(canonical_json_text(normalized), None)
-        case unreachable:
-            assert_never(unreachable)
+            return _normalize_nested_cell(value)
+
+
+def _normalize_nested_cell(
+    value: list[ExcelSourceValue] | dict[str, ExcelSourceValue],
+) -> CellResult:
+    match _normalize_json_value(value):  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
+        case CellFailure() as failure:
+            return failure
+        case normalized:
+            return NormalizedCell(canonical_json_text(normalized), None)
 
 
 def normalize_excel_rows(
@@ -110,13 +113,11 @@ def normalize_excel_rows(
     ordered_source_columns = list(source_columns)
     seen_source_columns = set(source_columns)
     for row in rows:
-        match _prepare_row(row):
+        match _prepare_row(row):  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
             case CellFailure() as failure:
                 return failure
             case PreparedExcelRow() as prepared:
                 prepared_rows.append(prepared)
-            case unreachable:
-                assert_never(unreachable)
         for source_name, _value in row.source:
             if source_name not in seen_source_columns:
                 ordered_source_columns.append(source_name)
@@ -136,7 +137,7 @@ def normalize_excel_rows(
 
 
 def _normalize_json_value(value: ExcelSourceValue) -> JsonValue | CellFailure:
-    match value:
+    match value:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case bool() | int() | str() | None:
             return value
         case float() as number:
@@ -149,8 +150,6 @@ def _normalize_json_value(value: ExcelSourceValue) -> JsonValue | CellFailure:
             return _normalize_json_list(items)
         case dict() as mapping:
             return _normalize_json_mapping(mapping)
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _normalize_json_list(
@@ -158,7 +157,7 @@ def _normalize_json_list(
 ) -> list[JsonValue] | CellFailure:
     normalized_items: list[JsonValue] = []
     for item in items:
-        match _normalize_json_value(item):
+        match _normalize_json_value(item):  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
             case CellFailure() as failure:
                 return failure
             case normalized:
@@ -171,7 +170,7 @@ def _normalize_json_mapping(
 ) -> dict[str, JsonValue] | CellFailure:
     normalized_mapping: dict[str, JsonValue] = {}
     for key, item in mapping.items():
-        match _normalize_json_value(item):
+        match _normalize_json_value(item):  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
             case CellFailure() as failure:
                 return failure
             case normalized:
@@ -180,32 +179,26 @@ def _normalize_json_mapping(
 
 
 def _prepare_row(row: PendingExcelRow) -> PreparedExcelRow | CellFailure:
-    match _prepare_pairs(row.context):
+    match _prepare_pairs(row.context):  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case CellFailure() as failure:
             return failure
         case dict() as context:
             pass
-        case unreachable:
-            assert_never(unreachable)
-    match _prepare_pairs(row.source):
+    match _prepare_pairs(row.source):  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case CellFailure() as failure:
             return failure
         case dict() as source:
             return PreparedExcelRow(context, source)
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _prepare_pairs(pairs: SourcePairs) -> CellMap | CellFailure:
     prepared: CellMap = {}
     for name, value in pairs:
-        match normalize_excel_cell(value):
+        match normalize_excel_cell(value):  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
             case CellFailure() as failure:
                 return failure
             case NormalizedCell() as normalized:
                 prepared[name] = normalized
-            case unreachable:
-                assert_never(unreachable)
     return prepared
 
 

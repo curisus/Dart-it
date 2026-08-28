@@ -1,4 +1,5 @@
-from typing import Final
+from collections.abc import Callable
+from typing import ClassVar, Final
 
 from pydantic import field_validator
 
@@ -32,7 +33,9 @@ class ListReportFilingsArguments(StrictExcelArguments):
     corp_code: str
     report_kind: str
 
-    validate_corp_code_field = field_validator("corp_code")(validate_corp_code)
+    validate_corp_code_field: ClassVar[Callable[[str], str]] = field_validator(
+        "corp_code",
+    )(validate_corp_code)
 
     @field_validator("report_kind")
     @classmethod
@@ -48,10 +51,14 @@ class ListReportFilingsArguments(StrictExcelArguments):
 class ListReportAttachmentsArguments(StrictExcelArguments):
     rcept_no: str
 
-    validate_rcept_no_field = field_validator("rcept_no")(validate_rcept_no)
+    validate_rcept_no_field: ClassVar[Callable[[str], str]] = field_validator(
+        "rcept_no",
+    )(validate_rcept_no)
 
 
 class GetCompanyProfileArguments(StrictExcelArguments):
     corp_code: str
 
-    validate_corp_code_field = field_validator("corp_code")(validate_corp_code)
+    validate_corp_code_field: ClassVar[Callable[[str], str]] = field_validator(
+        "corp_code",
+    )(validate_corp_code)

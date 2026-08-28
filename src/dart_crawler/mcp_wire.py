@@ -125,7 +125,7 @@ def measure_excel_schema_wire(result: Result[ExcelPage]) -> WireSizeReport:
         dataset_id=page.dataset_id,
         columns=page.columns,
         rows=(),
-        warnings=(),
+        warnings=page.warnings,
         provenance=page.provenance,
         total_rows=page.total_rows,
         offset=page.offset,

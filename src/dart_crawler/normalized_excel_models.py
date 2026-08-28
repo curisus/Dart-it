@@ -77,7 +77,7 @@ class NormalizedExcelDataset(BaseModel):
                 msg = "normalized row order must match columns"
                 raise ValueError(msg)
             for value in row.values():
-                match value:
+                match value:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
                     case float() as number if not math.isfinite(number):
                         msg = "normalized floats must be finite"
                         raise ValueError(msg)

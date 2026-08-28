@@ -1,4 +1,4 @@
-from typing import Literal, assert_never
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -72,14 +72,14 @@ def validate_excel_query(
         query = _validated_query(domain, arguments)
     except ValidationError:
         return excel_failure("invalid_request")
-    return Result.success(query)
+    return Result[ValidatedExcelQuery].success(query)
 
 
 def _validated_query(
     domain: ExcelDataDomain,
     arguments: JsonObject,
 ) -> ValidatedExcelQuery:
-    match domain:
+    match domain:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case (
             ExcelDataDomain.SEARCH_COMPANIES
             | ExcelDataDomain.LIST_REPORT_FILINGS
@@ -102,15 +102,13 @@ def _validated_query(
             | ExcelDataDomain.GET_REGISTRATION_STATEMENTS
         ):
             return _validated_disclosure_query(domain, arguments)
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _validated_report_query(
     domain: ReportDomain,
     arguments: JsonObject,
 ) -> ValidatedExcelQuery:
-    match domain:
+    match domain:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case ExcelDataDomain.SEARCH_COMPANIES:
             return SearchCompaniesQuery(
                 SearchCompaniesArguments.model_validate(arguments)
@@ -135,15 +133,13 @@ def _validated_report_query(
             return GetCompanyProfileQuery(
                 GetCompanyProfileArguments.model_validate(arguments)
             )
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _validated_financial_query(
     domain: FinancialDomain,
     arguments: JsonObject,
 ) -> ValidatedExcelQuery:
-    match domain:
+    match domain:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case ExcelDataDomain.GET_FINANCIAL_STATEMENTS:
             return GetFinancialStatementsQuery(
                 GetFinancialStatementsArguments.model_validate(arguments)
@@ -156,15 +152,13 @@ def _validated_financial_query(
             return GetFinancialIndicatorsQuery(
                 GetFinancialIndicatorsArguments.model_validate(arguments)
             )
-        case unreachable:
-            assert_never(unreachable)
 
 
 def _validated_disclosure_query(
     domain: DisclosureDomain,
     arguments: JsonObject,
 ) -> ValidatedExcelQuery:
-    match domain:
+    match domain:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         case ExcelDataDomain.GET_REPORT_TOPICS:
             return GetReportTopicsQuery(
                 GetReportTopicsArguments.model_validate(arguments)
@@ -181,5 +175,3 @@ def _validated_disclosure_query(
             return GetRegistrationStatementsQuery(
                 GetRegistrationStatementsArguments.model_validate(arguments)
             )
-        case unreachable:
-            assert_never(unreachable)

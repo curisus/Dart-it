@@ -4,7 +4,12 @@ import hashlib
 import json
 import math
 from enum import StrEnum, unique
-from typing import ClassVar, Final, Literal, assert_never
+from typing import (
+    ClassVar,
+    Final,
+    Literal,
+    TypeGuard,
+)
 
 from pydantic import (
     BaseModel,
@@ -15,7 +20,7 @@ from pydantic import (
     model_validator,
 )
 
-from dart_crawler.result import JsonObject, WarningInfo
+from dart_crawler.result import JsonObject, JsonValue, WarningInfo
 
 EXCEL_SCHEMA_VERSION: Final = 1
 EXCEL_CURSOR_VERSION: Final = 1
@@ -122,15 +127,15 @@ class ExcelPage(BaseModel):
         rows: tuple[ExcelRow, ...],
         info: ValidationInfo,
     ) -> tuple[ExcelRow, ...]:
-        raw_columns = info.data.get("columns")
-        if not isinstance(raw_columns, tuple):
-            return rows
-        columns = tuple(
-            column for column in raw_columns if isinstance(column, str)
+        raw_columns: tuple[JsonValue, ...] | JsonValue = info.data.get(
+            "columns",
         )
-        if len(columns) != len(raw_columns):
+        if not _is_tuple(raw_columns):
+            return rows
+        if not _is_string_tuple(raw_columns):
             msg = "Excel page columns must be strings"
             raise ValueError(msg)
+        columns = raw_columns
         return _normalize_rows(columns, rows)
 
     @field_validator("provenance")
@@ -185,17 +190,29 @@ def _normalize_rows(
             msg = "Excel page rows must match the ordered columns"
             raise ValueError(msg)
         for value in row.values():
-            match value:
+            match value:  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
                 case float() as number:
                     if not math.isfinite(number):
                         msg = "Excel page scalar floats must be finite"
                         raise ValueError(msg)
-                case str() | int() | bool() | None:
+                case None:
                     pass
-                case unreachable:
-                    assert_never(unreachable)
+                case str() | int():
+                    pass
         normalized.append({column: row[column] for column in columns})
     return tuple(normalized)
+
+
+def _is_tuple(
+    value: tuple[JsonValue, ...] | JsonValue,
+) -> TypeGuard[tuple[JsonValue, ...]]:
+    return isinstance(value, tuple)
+
+
+def _is_string_tuple(
+    value: tuple[JsonValue, ...],
+) -> TypeGuard[tuple[str, ...]]:
+    return all(isinstance(item, str) for item in value)
 
 
 def _dataset_id(

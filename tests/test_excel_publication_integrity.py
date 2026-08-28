@@ -7,6 +7,8 @@ import pytest
 import dart_crawler.excel_safe_publication as safe_publication
 from dart_crawler.excel_export_result import Result as ExcelResult
 from dart_crawler.excel_publication_file_ops import (
+    CleanupCompleted,
+    CleanupFailed,
     ExcelPublicationFileOps,
     FileOperationFailed,
     SystemExcelPublicationFileOps,
@@ -18,6 +20,8 @@ from dart_crawler.result import ErrorCode
 from tests.excel_publication_test_support import (
     PostLinkCorruptionPublicationOps,
     PostLinkReplacementPublicationOps,
+    capture_owned_file,
+    install_move_other_owner_race,
 )
 from tests.excel_query_workbook_test_support import make_normalized_dataset
 from tests.local_excel_export_test_support import RecordingClock
@@ -71,6 +75,158 @@ def test_destination_replaced_before_capture_is_preserved_by_system_file_ops(
 
     assert isinstance(result, FileOperationFailed)
     assert destination.read_bytes() == replacement_payload
+
+
+def test_unlink_owned_preserves_replacement_installed_during_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_replace = os.replace
+    victim = tmp_path / "published.xlsx"
+    replacement_payload = b"other-owner"
+    _ = victim.write_bytes(b"owned")
+    owned = capture_owned_file(victim)
+    raced = False
+
+    def replace_after_identity_check(
+        source_path: Path,
+        destination_path: Path,
+    ) -> None:
+        nonlocal raced
+        if source_path == victim and not raced:
+            raced = True
+            source_path.unlink()
+            _ = source_path.write_bytes(replacement_payload)
+        real_replace(source_path, destination_path)
+
+    monkeypatch.setattr(os, "replace", replace_after_identity_check)
+
+    result = SystemExcelPublicationFileOps().unlink_owned(owned)
+
+    assert raced
+    assert isinstance(result, CleanupCompleted)
+    assert victim.read_bytes() == replacement_payload
+    assert not tuple(tmp_path.glob(".*.delete-*"))
+
+
+def test_unlink_owned_preserves_quarantine_replaced_during_restore(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_link = os.link
+    victim = tmp_path / "published.xlsx"
+    moved_payload = b"moved-other-owner"
+    quarantine_replacement = b"quarantine-other-owner"
+    _ = victim.write_bytes(b"owned")
+    owned = capture_owned_file(victim)
+    quarantines: list[Path] = []
+
+    def restore_then_replace_quarantine(
+        source_path: Path,
+        destination_path: Path,
+    ) -> None:
+        real_link(source_path, destination_path)
+        quarantines.append(source_path)
+        source_path.unlink()
+        _ = source_path.write_bytes(quarantine_replacement)
+
+    install_move_other_owner_race(monkeypatch, victim, moved_payload)
+    monkeypatch.setattr(os, "link", restore_then_replace_quarantine)
+
+    result = SystemExcelPublicationFileOps().unlink_owned(owned)
+
+    assert isinstance(result, CleanupCompleted)
+    assert victim.read_bytes() == moved_payload
+    assert [path.read_bytes() for path in quarantines] == [quarantine_replacement]
+
+
+def test_unlink_owned_reports_failure_when_quarantine_replaced_before_restore_link(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_link = os.link
+    victim = tmp_path / "published.xlsx"
+    moved_payload = b"externally-deleted-owner"
+    new_owner_payload = b"new-quarantine-owner"
+    _ = victim.write_bytes(b"owned")
+    owned = capture_owned_file(victim)
+    quarantines: list[Path] = []
+
+    def replace_quarantine_before_link(
+        source_path: Path,
+        destination_path: Path,
+    ) -> None:
+        quarantines.append(source_path)
+        source_path.unlink()
+        _ = source_path.write_bytes(new_owner_payload)
+        real_link(source_path, destination_path)
+
+    install_move_other_owner_race(monkeypatch, victim, moved_payload)
+    monkeypatch.setattr(os, "link", replace_quarantine_before_link)
+
+    result = SystemExcelPublicationFileOps().unlink_owned(owned)
+
+    assert isinstance(result, CleanupFailed)
+    assert [victim.read_bytes(), *(path.read_bytes() for path in quarantines)] == [new_owner_payload] * 2
+
+
+def test_unlink_owned_preserves_both_files_when_restore_collides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_link = os.link
+    victim = tmp_path / "published.xlsx"
+    moved_payload = b"moved-other-owner"
+    blocker_payload = b"new-path-owner"
+    _ = victim.write_bytes(b"owned")
+    owned = capture_owned_file(victim)
+    quarantines: list[Path] = []
+
+    def collide_with_restore(
+        source_path: Path,
+        destination_path: Path,
+    ) -> None:
+        quarantines.append(source_path)
+        _ = destination_path.write_bytes(blocker_payload)
+        real_link(source_path, destination_path)
+
+    install_move_other_owner_race(monkeypatch, victim, moved_payload)
+    monkeypatch.setattr(os, "link", collide_with_restore)
+
+    result = SystemExcelPublicationFileOps().unlink_owned(owned)
+
+    assert isinstance(result, CleanupFailed)
+    assert victim.read_bytes() == blocker_payload
+    assert [path.read_bytes() for path in quarantines] == [moved_payload]
+
+
+def test_unlink_owned_close_failure_does_not_recurse(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_close = os.close
+    victim = tmp_path / "published.xlsx"
+    _ = victim.write_bytes(b"owned")
+    owned = capture_owned_file(victim)
+    close_calls = 0
+
+    def close_once_then_reject_recursion(descriptor: int) -> None:
+        nonlocal close_calls
+        real_close(descriptor)
+        close_calls += 1
+        if close_calls > 1:
+            msg = "cleanup recursively created another quarantine"
+            raise AssertionError(msg)
+        raise OSError
+
+    monkeypatch.setattr(os, "close", close_once_then_reject_recursion)
+
+    result = SystemExcelPublicationFileOps().unlink_owned(owned)
+
+    assert isinstance(result, CleanupFailed)
+    assert close_calls == 1
+    assert victim.read_bytes() == b"owned"
+    assert not tuple(tmp_path.glob(".*.delete-*"))
 
 
 def test_replaced_destination_is_not_deleted_when_replaced_after_link(

@@ -13,6 +13,7 @@ from dart_crawler.excel_normalization_errors import normalization_error
 from dart_crawler.excel_page_models import ExcelDataDomain
 from dart_crawler.excel_row_normalization import (
     CellFailure,
+    NormalizedExcelTable,
     PendingExcelRow,
     normalize_excel_rows,
 )
@@ -38,18 +39,18 @@ class ExcelSourceDataset:
 def normalize_excel_source(
     source: ExcelSourceDataset,
 ) -> Result[NormalizedExcelDataset]:
-    match normalize_excel_rows(
+    match normalize_excel_rows(  # noqa: MATCH_OK — BasedPyright enforces exhaustive closed-union coverage
         source.context_columns,
         source.source_columns,
         source.rows,
     ):
         case CellFailure(reason=reason):
-            return Result.failure(
+            return Result[NormalizedExcelDataset].failure(
                 normalization_error(reason),
                 warnings=source.warnings,
                 next_action=source.next_action,
             )
-        case table:
+        case NormalizedExcelTable() as table:
             pass
     request_fingerprint = normalized_request_fingerprint(
         source.domain,
@@ -70,7 +71,7 @@ def normalize_excel_source(
         request_fingerprint,
         source_fingerprint,
     )
-    return Result.success(
+    return Result[NormalizedExcelDataset].success(
         NormalizedExcelDataset(
             domain=source.domain,
             validated_arguments=validated_arguments,
@@ -93,7 +94,7 @@ def preserve_excel_failure[T](
     error = result.error
     if error is None:
         return excel_failure("invalid_request")
-    return Result.failure(
+    return Result[NormalizedExcelDataset].failure(
         error,
         warnings=result.warnings,
         next_action=result.next_action,

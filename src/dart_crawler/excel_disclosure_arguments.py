@@ -1,4 +1,5 @@
-from typing import Final, Self
+from collections.abc import Callable
+from typing import ClassVar, Final, Self
 
 from pydantic import Field, field_validator, model_validator
 
@@ -39,8 +40,12 @@ class GetReportTopicsArguments(StrictExcelArguments):
         max_length=len(REPORT_TOPICS),
     )
 
-    validate_corp_code_field = field_validator("corp_code")(validate_corp_code)
-    validate_unique_topics = field_validator("topics")(validate_unique)
+    validate_corp_code_field: ClassVar[Callable[[str], str]] = field_validator(
+        "corp_code",
+    )(validate_corp_code)
+    validate_unique_topics: ClassVar[
+        Callable[[tuple[str, ...]], tuple[str, ...]]
+    ] = field_validator("topics")(validate_unique)
 
     @field_validator("reprt_code")
     @classmethod
@@ -61,9 +66,15 @@ class GetOwnershipReportsArguments(StrictExcelArguments):
     bgn_de: str = ""
     end_de: str = ""
 
-    validate_corp_code_field = field_validator("corp_code")(validate_corp_code)
-    validate_bgn_de = field_validator("bgn_de")(validate_optional_date)
-    validate_end_de = field_validator("end_de")(validate_optional_date)
+    validate_corp_code_field: ClassVar[Callable[[str], str]] = field_validator(
+        "corp_code",
+    )(validate_corp_code)
+    validate_bgn_de: ClassVar[Callable[[str], str]] = field_validator("bgn_de")(
+        validate_optional_date,
+    )
+    validate_end_de: ClassVar[Callable[[str], str]] = field_validator("end_de")(
+        validate_optional_date,
+    )
 
     @field_validator("report_type")
     @classmethod
@@ -85,10 +96,18 @@ class GetMaterialEventsArguments(StrictExcelArguments):
     bgn_de: str
     end_de: str
 
-    validate_corp_code_field = field_validator("corp_code")(validate_corp_code)
-    validate_unique_event_types = field_validator("event_types")(validate_unique)
-    validate_bgn_de = field_validator("bgn_de")(validate_required_date)
-    validate_end_de = field_validator("end_de")(validate_required_date)
+    validate_corp_code_field: ClassVar[Callable[[str], str]] = field_validator(
+        "corp_code",
+    )(validate_corp_code)
+    validate_unique_event_types: ClassVar[
+        Callable[[tuple[str, ...]], tuple[str, ...]]
+    ] = field_validator("event_types")(validate_unique)
+    validate_bgn_de: ClassVar[Callable[[str], str]] = field_validator("bgn_de")(
+        validate_required_date,
+    )
+    validate_end_de: ClassVar[Callable[[str], str]] = field_validator("end_de")(
+        validate_required_date,
+    )
 
     @field_validator("event_types")
     @classmethod
@@ -115,9 +134,15 @@ class GetRegistrationStatementsArguments(StrictExcelArguments):
     bgn_de: str
     end_de: str
 
-    validate_corp_code_field = field_validator("corp_code")(validate_corp_code)
-    validate_bgn_de = field_validator("bgn_de")(validate_required_date)
-    validate_end_de = field_validator("end_de")(validate_required_date)
+    validate_corp_code_field: ClassVar[Callable[[str], str]] = field_validator(
+        "corp_code",
+    )(validate_corp_code)
+    validate_bgn_de: ClassVar[Callable[[str], str]] = field_validator("bgn_de")(
+        validate_required_date,
+    )
+    validate_end_de: ClassVar[Callable[[str], str]] = field_validator("end_de")(
+        validate_required_date,
+    )
 
     @field_validator("stmt_type")
     @classmethod
