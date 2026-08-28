@@ -7,11 +7,88 @@ from pathlib import Path
 from typing import Final
 
 import pytest
+import scripts.excel_benchmark_worker as benchmark_worker
 from pydantic import TypeAdapter
 
-from dart_crawler.result import JsonObject
+from dart_crawler.excel_export_result import Result as ExcelResult
+from dart_crawler.excel_publication_file_ops import (
+    SYSTEM_EXCEL_PUBLICATION_FILE_OPS,
+    ExcelPublicationFileOps,
+)
+from dart_crawler.excel_query_export_models import ExcelExportResult
+from dart_crawler.excel_query_workbook_plan import (
+    ExcelClock,
+    ExcelWorkbookOptions,
+)
+from dart_crawler.normalized_excel_models import NormalizedExcelDataset
+from dart_crawler.result import ErrorCode, JsonObject, error_info
 
 _JSON_OBJECT: Final[TypeAdapter[JsonObject]] = TypeAdapter(JsonObject)
+
+
+def _publication_failure(error_code: ErrorCode) -> ExcelResult[ExcelExportResult]:
+    return ExcelResult[ExcelExportResult].failure(
+        error_info(
+            error_code,
+            "Controlled test failure.",
+            retryable=False,
+            details={"reason": "controlled_test_failure"},
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_reason"),
+    [
+        pytest.param("output_root", "xlsx_output_root_failed", id="output_root"),
+        pytest.param("lock", "xlsx_lock_failed", id="lock"),
+        pytest.param("temp", "xlsx_temp_failed", id="temp"),
+        pytest.param("hardlink", "xlsx_hardlink_failed", id="hardlink"),
+        pytest.param("validation", "xlsx_validation_failed", id="validation"),
+    ],
+)
+def test_worker_reports_finite_xlsx_failure_stage(
+    failure_stage: str,
+    expected_reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_publication(
+        dataset: NormalizedExcelDataset,
+        output_root: Path,
+        *,
+        clock: ExcelClock,
+        options: ExcelWorkbookOptions,
+        file_ops: ExcelPublicationFileOps = SYSTEM_EXCEL_PUBLICATION_FILE_OPS,
+        next_action: str | None = None,
+    ) -> ExcelResult[ExcelExportResult]:
+        del dataset, clock, options, next_action
+        if failure_stage == "lock":
+            _ = file_ops.acquire_lock(output_root / "candidate.xlsx.lock")
+        elif failure_stage == "temp":
+            _ = file_ops.create_temp(output_root, ".candidate.")
+        elif failure_stage == "hardlink":
+            _ = file_ops.publish_link(
+                output_root / "source.xlsx",
+                output_root / "destination.xlsx",
+            )
+        error_code = (
+            ErrorCode.VALIDATION_FAILED
+            if failure_stage == "validation"
+            else ErrorCode.OUTPUT_WRITE_FAILED
+        )
+        return _publication_failure(error_code)
+
+    monkeypatch.setattr(
+        benchmark_worker,
+        "publish_excel_dataset",
+        fail_publication,
+    )
+
+    with pytest.raises(
+        benchmark_worker.BenchmarkError,
+        match=rf"^{expected_reason}$",
+    ):
+        _ = benchmark_worker.run_worker(2, 2)
 
 
 def _run_benchmark(
@@ -131,6 +208,28 @@ def test_worker_failure_does_not_relay_untrusted_prefixed_stderr(
     assert not report_path.exists()
     assert completed.stderr.rstrip().endswith("BenchmarkError: worker_failed")
     assert "FAKE_SECRET_VALUE" not in completed.stderr
+
+
+def test_parent_preserves_finite_xlsx_stage_diagnostic(tmp_path: Path) -> None:
+    # Given: the worker emits one finite, non-secret XLSX publication stage code.
+    fake_uv = tmp_path / "uv.cmd"
+    _ = fake_uv.write_text(
+        "@echo benchmark_worker_error=xlsx_output_root_failed>&2\n@exit /b 2\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["PATH"] = str(tmp_path)
+    report_path = tmp_path / "benchmark.json"
+
+    # When: the public benchmark entry point handles the failed worker launch.
+    completed = _run_benchmark(report_path, (1, 2, 2), environment)
+
+    # Then: that allowlisted static stage survives without relaying arbitrary stderr.
+    assert completed.returncode == 1
+    assert not report_path.exists()
+    assert completed.stderr.rstrip().endswith(
+        "BenchmarkError: worker_failed:xlsx_output_root_failed"
+    )
 
 
 def test_noncontract_smoke_uses_two_fresh_processes_without_claiming_pass(

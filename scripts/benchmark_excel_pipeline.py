@@ -36,7 +36,11 @@ _ALLOWED_WORKER_ERROR_REASONS: Final[frozenset[str]] = frozenset(
         "powershell_not_found",
         "wire_measurement_changed",
         "wire_serialization_failed",
-        "xlsx_generation_failed",
+        "xlsx_hardlink_failed",
+        "xlsx_lock_failed",
+        "xlsx_output_root_failed",
+        "xlsx_temp_failed",
+        "xlsx_validation_failed",
     }
 )
 

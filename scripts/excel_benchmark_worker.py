@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from enum import StrEnum
 from pathlib import Path
 from typing import Final, Never
 
@@ -53,6 +54,15 @@ from dart_crawler.excel_page_selection import (  # noqa: E402
 from dart_crawler.excel_page_selection import (  # noqa: E402
     NormalizedExcelDataset as PageDataset,
 )
+from dart_crawler.excel_publication_file_ops import (  # noqa: E402
+    SYSTEM_EXCEL_PUBLICATION_FILE_OPS,
+    CleanupOutcome,
+    ExcelPublicationFileOps,
+    LinkOutcome,
+    LockOutcome,
+    OwnedFile,
+    TempOutcome,
+)
 from dart_crawler.excel_query_workbook_plan import (  # noqa: E402
     ExcelWorkbookOptions,
     SystemExcelClock,
@@ -68,7 +78,7 @@ from dart_crawler.normalized_excel_models import (  # noqa: E402
     NormalizedExcelDataset,
     NormalizedExcelProvenance,
 )
-from dart_crawler.result import JsonObject  # noqa: E402
+from dart_crawler.result import ErrorCode, JsonObject  # noqa: E402
 
 _MIB: Final = 1024 * 1024
 _CURSOR_SECRET: Final = CursorSecret(value=SecretBytes(b"benchmark-secret" * 3))
@@ -81,6 +91,38 @@ class BenchmarkError(RuntimeError):
 class WorkerArguments(BaseModel):
     rows: int
     columns: int
+
+
+class _XlsxFailureStage(StrEnum):
+    OUTPUT_ROOT = "xlsx_output_root_failed"
+    LOCK = "xlsx_lock_failed"
+    TEMP = "xlsx_temp_failed"
+    HARDLINK = "xlsx_hardlink_failed"
+
+
+class _DiagnosingPublicationFileOps:
+    def __init__(
+        self,
+        delegate: ExcelPublicationFileOps = SYSTEM_EXCEL_PUBLICATION_FILE_OPS,
+    ) -> None:
+        self._delegate: ExcelPublicationFileOps = delegate
+        self.failure_stage: _XlsxFailureStage = _XlsxFailureStage.OUTPUT_ROOT
+
+    def acquire_lock(self, path: Path) -> LockOutcome:
+        self.failure_stage = _XlsxFailureStage.LOCK
+        return self._delegate.acquire_lock(path)
+
+    def create_temp(self, directory: Path, prefix: str) -> TempOutcome:
+        self.failure_stage = _XlsxFailureStage.TEMP
+        return self._delegate.create_temp(directory, prefix)
+
+    def publish_link(self, source: Path, destination: Path) -> LinkOutcome:
+        self.failure_stage = _XlsxFailureStage.HARDLINK
+        return self._delegate.publish_link(source, destination)
+
+    def unlink_owned(self, file: OwnedFile) -> CleanupOutcome:
+        return self._delegate.unlink_owned(file)
+
 
 def _fail(reason: str) -> Never:
     raise BenchmarkError(reason)
@@ -190,15 +232,22 @@ def run_worker(row_count: int, column_count: int) -> JsonObject:
 
     with tempfile.TemporaryDirectory(prefix="dart_excel_benchmark_") as temp_dir:
         started = time.perf_counter()
+        publication_ops = _DiagnosingPublicationFileOps()
         export_result = publish_excel_dataset(
             dataset,
             Path(temp_dir) / "output",
             clock=SystemExcelClock(),
             options=ExcelWorkbookOptions(),
+            file_ops=publication_ops,
         )
         xlsx_seconds = time.perf_counter() - started
         if export_result.data is None:
-            _fail("xlsx_generation_failed")
+            if (
+                export_result.error is not None
+                and export_result.error.code is ErrorCode.VALIDATION_FAILED
+            ):
+                _fail("xlsx_validation_failed")
+            _fail(publication_ops.failure_stage.value)
 
     del dataset
     _ = gc.collect()
