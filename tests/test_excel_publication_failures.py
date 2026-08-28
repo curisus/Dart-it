@@ -44,6 +44,10 @@ def test_non_directory_and_symlink_output_roots_are_rejected(tmp_path: Path) -> 
     assert file_root.read_text(encoding="utf-8") == "not a directory"
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires Windows junction semantics",
+)
 def test_windows_junction_output_root_is_rejected(tmp_path: Path) -> None:
     target = tmp_path / "junction-target"
     target.mkdir()

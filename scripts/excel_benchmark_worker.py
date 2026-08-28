@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.13,<3.14"
 # dependencies = [
@@ -230,7 +229,10 @@ def run_worker(row_count: int, column_count: int) -> JsonObject:
     wire_bytes = _select_and_serialize(dataset)
     page_seconds = time.perf_counter() - started
 
-    with tempfile.TemporaryDirectory(prefix="dart_excel_benchmark_") as temp_dir:
+    with tempfile.TemporaryDirectory(
+        dir=_PROJECT_ROOT,
+        prefix=".dart_excel_benchmark_",
+    ) as temp_dir:
         started = time.perf_counter()
         publication_ops = _DiagnosingPublicationFileOps()
         export_result = publish_excel_dataset(

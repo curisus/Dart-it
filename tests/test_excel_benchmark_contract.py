@@ -24,6 +24,10 @@ from dart_crawler.normalized_excel_models import NormalizedExcelDataset
 from dart_crawler.result import ErrorCode, JsonObject, error_info
 
 _JSON_OBJECT: Final[TypeAdapter[JsonObject]] = TypeAdapter(JsonObject)
+_WINDOWS_ONLY: Final = pytest.mark.skipif(
+    os.name != "nt",
+    reason="requires Windows benchmark integration",
+)
 
 
 def _publication_failure(error_code: ErrorCode) -> ExcelResult[ExcelExportResult]:
@@ -118,6 +122,7 @@ def _run_benchmark(
     )
 
 
+@_WINDOWS_ONLY
 def test_smoke_uses_pwsh_when_legacy_powershell_is_unavailable(
     tmp_path: Path,
 ) -> None:
@@ -145,6 +150,7 @@ def test_smoke_uses_pwsh_when_legacy_powershell_is_unavailable(
     assert report["fresh_processes"] is True
 
 
+@_WINDOWS_ONLY
 def test_worker_failure_preserves_controlled_diagnostic(tmp_path: Path) -> None:
     # Given: uv is present, but neither supported PowerShell executable is on PATH.
     uv = shutil.which("uv")
@@ -164,6 +170,54 @@ def test_worker_failure_preserves_controlled_diagnostic(tmp_path: Path) -> None:
     assert completed.stderr.rstrip().endswith(
         "BenchmarkError: worker_failed:powershell_not_found"
     )
+
+
+@_WINDOWS_ONLY
+def test_worker_ignores_junction_temp_and_reaches_no_shell_failure(
+    tmp_path: Path,
+) -> None:
+    # Given: ambient TEMP traverses a junction and no PowerShell is on PATH.
+    uv = shutil.which("uv")
+    assert uv is not None
+    environment = os.environ.copy()
+    environment["PATH"] = str(Path(uv).parent)
+    assert shutil.which("powershell.exe", path=environment["PATH"]) is None
+    assert shutil.which("pwsh.exe", path=environment["PATH"]) is None
+    real_temp = tmp_path / "real-temp"
+    real_temp.mkdir()
+    junction_temp = tmp_path / "junction-temp"
+    command_processor = Path(os.environ["COMSPEC"]).resolve(strict=True)
+    completed_link = subprocess.run(  # noqa: S603
+        [
+            str(command_processor),
+            "/c",
+            "mklink",
+            "/J",
+            str(junction_temp),
+            str(real_temp),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed_link.returncode == 0
+    environment["TEMP"] = str(junction_temp)
+    environment["TMP"] = str(junction_temp)
+    report_path = tmp_path / "benchmark.json"
+
+    # When: the real benchmark worker creates and reopens its XLSX.
+    try:
+        completed = _run_benchmark(report_path, (1, 2, 2), environment)
+    finally:
+        os.rmdir(junction_temp)
+
+    # Then: it reaches the RSS stage instead of rejecting ambient TEMP.
+    assert completed.returncode == 1
+    assert not report_path.exists()
+    assert completed.stderr.rstrip().endswith(
+        "BenchmarkError: worker_failed:powershell_not_found"
+    )
+    assert "xlsx_output_root_failed" not in completed.stderr
 
 
 @pytest.mark.parametrize(
@@ -186,6 +240,7 @@ def test_worker_failure_preserves_controlled_diagnostic(tmp_path: Path) -> None:
         ),
     ],
 )
+@_WINDOWS_ONLY
 def test_worker_failure_does_not_relay_untrusted_prefixed_stderr(
     tmp_path: Path,
     worker_stderr_commands: tuple[str, ...],
@@ -210,6 +265,7 @@ def test_worker_failure_does_not_relay_untrusted_prefixed_stderr(
     assert "FAKE_SECRET_VALUE" not in completed.stderr
 
 
+@_WINDOWS_ONLY
 def test_parent_preserves_finite_xlsx_stage_diagnostic(tmp_path: Path) -> None:
     # Given: the worker emits one finite, non-secret XLSX publication stage code.
     fake_uv = tmp_path / "uv.cmd"
@@ -232,6 +288,7 @@ def test_parent_preserves_finite_xlsx_stage_diagnostic(tmp_path: Path) -> None:
     )
 
 
+@_WINDOWS_ONLY
 def test_noncontract_smoke_uses_two_fresh_processes_without_claiming_pass(
     tmp_path: Path,
 ) -> None:
