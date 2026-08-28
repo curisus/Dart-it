@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,7 +72,6 @@ def _is_reparse(path: Path) -> bool:
         return True
     if stat.S_ISLNK(status.st_mode) or path.is_junction():
         return True
-    return bool(
-        os.name == "nt"
-        and status.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
-    )
+    if sys.platform != "win32":
+        return False
+    return bool(status.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
