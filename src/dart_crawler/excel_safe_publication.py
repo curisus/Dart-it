@@ -22,7 +22,10 @@ from dart_crawler.excel_publication_file_ops import (
     CleanupFailed,
     ExcelPublicationFileOps,
     FileOperationFailed,
+    LinkOutcome,
     OwnedFile,
+    is_current_regular_file,
+    publish_owned_link,
 )
 from dart_crawler.excel_query_export_models import ExcelExportResult
 from dart_crawler.excel_query_workbook_plan import (
@@ -124,13 +127,20 @@ def _publish_owned_candidate(
     if isinstance(validated, WorkbookValidationFailure):
         _cleanup_before_publish(temp_file, lock_file, file_ops)
         return _validation_failure(validated.reason)
-    link_outcome = file_ops.publish_link(temp_path, final_path)
+    link_outcome: LinkOutcome = publish_owned_link(
+        file_ops, temp_file, final_path
+    )
     if isinstance(link_outcome, CandidateUnavailable):
         _cleanup_before_publish(temp_file, lock_file, file_ops)
         return None
     if isinstance(link_outcome, FileOperationFailed):
         _cleanup_before_publish(temp_file, lock_file, file_ops)
         return _output_failure()
+    published_failure = _published_workbook_failure(link_outcome.file, plan)
+    if published_failure is not None:
+        _ = file_ops.unlink_owned(link_outcome.file)
+        _cleanup_before_publish(temp_file, lock_file, file_ops)
+        return published_failure
     cleanup_warnings = _cleanup_after_publish(temp_file, lock_file, file_ops)
     return Result[ExcelExportResult].success(
         ExcelExportResult(
@@ -153,6 +163,18 @@ def _candidate_is_safe(
     return is_safe_output_child(root, final_path) and is_safe_output_child(
         root, lock_path
     )
+
+
+def _published_workbook_failure(
+    published_file: OwnedFile,
+    plan: ExcelWorkbookPlan,
+) -> Result[ExcelExportResult] | None:
+    validation = validate_excel_query_workbook(published_file.path, plan)
+    if isinstance(validation, WorkbookValidationFailure):
+        return _validation_failure(validation.reason)
+    if not is_current_regular_file(published_file):
+        return _output_failure()
+    return None
 
 
 def _cleanup_before_publish(

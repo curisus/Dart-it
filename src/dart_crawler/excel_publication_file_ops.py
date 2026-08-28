@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import stat
+import sys
 import tempfile
 from contextlib import suppress
 from dataclasses import dataclass
@@ -48,7 +50,7 @@ type TempOutcome = TempFileCreated | FileOperationFailed
 
 @dataclass(frozen=True, slots=True)
 class HardLinkPublished:
-    pass
+    file: OwnedFile
 
 
 type LinkOutcome = (
@@ -133,7 +135,10 @@ class SystemExcelPublicationFileOps:
             return CandidateUnavailable()
         except OSError:
             return FileOperationFailed()
-        return HardLinkPublished()
+        published = _capture_regular_path(destination)
+        if published is None:
+            return FileOperationFailed()
+        return HardLinkPublished(file=published)
 
     def unlink_owned(self, file: OwnedFile) -> CleanupOutcome:
         return _unlink_matching_file(file)
@@ -144,14 +149,61 @@ SYSTEM_EXCEL_PUBLICATION_FILE_OPS: Final[ExcelPublicationFileOps] = (
 )
 
 
+def publish_owned_link(
+    file_ops: ExcelPublicationFileOps,
+    source: OwnedFile,
+    destination: Path,
+) -> LinkOutcome:
+    if not is_current_regular_file(source):
+        return FileOperationFailed()
+    outcome = file_ops.publish_link(source.path, destination)
+    if not isinstance(outcome, HardLinkPublished):
+        return outcome
+    if outcome.file.identity != source.identity:
+        _ = file_ops.unlink_owned(outcome.file)
+        return FileOperationFailed()
+    return outcome
+
+
 def _capture_owned_file(path: Path, descriptor: int) -> OwnedFile | None:
     try:
         status = os.fstat(descriptor)
     except OSError:
         return None
+    if not _is_regular_non_reparse(status):
+        return None
     return OwnedFile(
         path=path,
-        identity=FileIdentity(device=status.st_dev, inode=status.st_ino),
+        identity=_identity(status),
+    )
+
+
+def _capture_regular_path(path: Path) -> OwnedFile | None:
+    try:
+        status = os.lstat(path)
+    except OSError:
+        return None
+    if not _is_regular_non_reparse(status):
+        return None
+    return OwnedFile(path=path, identity=_identity(status))
+
+
+def is_current_regular_file(file: OwnedFile) -> bool:
+    current = _capture_regular_path(file.path)
+    return current is not None and current.identity == file.identity
+
+
+def _identity(status: os.stat_result) -> FileIdentity:
+    return FileIdentity(device=status.st_dev, inode=status.st_ino)
+
+
+def _is_regular_non_reparse(status: os.stat_result) -> bool:
+    if not stat.S_ISREG(status.st_mode):
+        return False
+    if sys.platform != "win32":
+        return True
+    return not bool(
+        status.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
     )
 
 
@@ -162,7 +214,7 @@ def _unlink_matching_file(file: OwnedFile) -> CleanupOutcome:
         return CleanupCompleted()
     except OSError:
         return CleanupFailed()
-    current = FileIdentity(device=status.st_dev, inode=status.st_ino)
+    current = _identity(status)
     if current != file.identity:
         return CleanupCompleted()
     try:

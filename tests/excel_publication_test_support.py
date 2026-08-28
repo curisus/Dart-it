@@ -111,6 +111,38 @@ class LinkRacePublicationOps(RecordingPublicationOps):
         return self._delegate.publish_link(source, destination)
 
 
+class PostLinkCorruptionPublicationOps(RecordingPublicationOps):
+    def __init__(self) -> None:
+        super().__init__()
+        self.corrupted_final: Path | None = None
+
+    @override
+    def publish_link(self, source: Path, destination: Path) -> LinkOutcome:
+        self.link_pairs.append((source, destination))
+        outcome = self._delegate.publish_link(source, destination)
+        if isinstance(outcome, HardLinkPublished):
+            _ = destination.write_bytes(b"corrupted-after-link")
+            self.corrupted_final = destination
+        return outcome
+
+
+class PostLinkReplacementPublicationOps(RecordingPublicationOps):
+    def __init__(self, replacement_payload: bytes) -> None:
+        super().__init__()
+        self._replacement_payload: bytes = replacement_payload
+        self.replaced_final: Path | None = None
+
+    @override
+    def publish_link(self, source: Path, destination: Path) -> LinkOutcome:
+        self.link_pairs.append((source, destination))
+        outcome = self._delegate.publish_link(source, destination)
+        if isinstance(outcome, HardLinkPublished):
+            destination.unlink()
+            _ = destination.write_bytes(self._replacement_payload)
+            self.replaced_final = destination
+        return outcome
+
+
 class UnsafeTempPublicationOps(RecordingPublicationOps):
     def __init__(self, outside_path: Path) -> None:
         super().__init__()
