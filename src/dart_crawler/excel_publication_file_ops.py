@@ -130,15 +130,46 @@ class SystemExcelPublicationFileOps:
 
     def publish_link(self, source: Path, destination: Path) -> LinkOutcome:
         try:
-            os.link(source, destination)
-        except FileExistsError:
-            return CandidateUnavailable()
+            descriptor = os.open(source, os.O_RDONLY)
         except OSError:
             return FileOperationFailed()
-        published = _capture_regular_path(destination)
-        if published is None:
+        opened = _capture_owned_file(source, descriptor)
+        if opened is None or not is_current_regular_file(opened):
+            with suppress(OSError):
+                os.close(descriptor)
             return FileOperationFailed()
-        return HardLinkPublished(file=published)
+        published_file: OwnedFile | None = None
+        try:
+            os.link(source, destination)
+        except FileExistsError:
+            outcome: LinkOutcome = CandidateUnavailable()
+        except OSError:
+            outcome = FileOperationFailed()
+        else:
+            published = _capture_regular_path(destination)
+            current_source = _capture_regular_path(source)
+            if published is None:
+                outcome = FileOperationFailed()
+            elif (
+                published.identity == opened.identity
+                and current_source == opened
+            ):
+                published_file = published
+                outcome = HardLinkPublished(file=published)
+            else:
+                _unlink_published_if_source_link(
+                    published,
+                    opened,
+                    current_source,
+                )
+                outcome = FileOperationFailed()
+        try:
+            os.close(descriptor)
+        except OSError:
+            if published_file is not None:
+                _ = _unlink_matching_file(published_file)
+            return FileOperationFailed()
+        return outcome
 
     def unlink_owned(self, file: OwnedFile) -> CleanupOutcome:
         return _unlink_matching_file(file)
@@ -186,6 +217,19 @@ def _capture_regular_path(path: Path) -> OwnedFile | None:
     if not _is_regular_non_reparse(status):
         return None
     return OwnedFile(path=path, identity=_identity(status))
+
+
+def _unlink_published_if_source_link(
+    published: OwnedFile,
+    opened: OwnedFile,
+    current_source: OwnedFile | None,
+) -> None:
+    tied_to_source = published.identity == opened.identity or (
+        current_source is not None
+        and published.identity == current_source.identity
+    )
+    if tied_to_source:
+        _ = _unlink_matching_file(published)
 
 
 def is_current_regular_file(file: OwnedFile) -> bool:

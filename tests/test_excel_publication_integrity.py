@@ -6,7 +6,11 @@ import pytest
 
 import dart_crawler.excel_safe_publication as safe_publication
 from dart_crawler.excel_export_result import Result as ExcelResult
-from dart_crawler.excel_publication_file_ops import ExcelPublicationFileOps
+from dart_crawler.excel_publication_file_ops import (
+    ExcelPublicationFileOps,
+    FileOperationFailed,
+    SystemExcelPublicationFileOps,
+)
 from dart_crawler.excel_query_export_models import ExcelExportResult
 from dart_crawler.excel_query_workbook_plan import ExcelWorkbookOptions
 from dart_crawler.normalized_excel_models import NormalizedExcelDataset
@@ -44,6 +48,29 @@ def test_source_replaced_inside_link_is_removed_when_identity_changes(
     finally:
         for replacement in output_root.glob(".search_companies.*.xlsx"):
             replacement.unlink(missing_ok=True)
+
+
+def test_destination_replaced_before_capture_is_preserved_by_system_file_ops(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_link = os.link
+    source = tmp_path / "validated.xlsx"
+    destination = tmp_path / "published.xlsx"
+    replacement_payload = b"other-owner"
+    _ = source.write_bytes(b"validated")
+
+    def link_then_replace(source_path: Path, destination_path: Path) -> None:
+        real_link(source_path, destination_path)
+        destination_path.unlink()
+        _ = destination_path.write_bytes(replacement_payload)
+
+    monkeypatch.setattr(os, "link", link_then_replace)
+
+    result = SystemExcelPublicationFileOps().publish_link(source, destination)
+
+    assert isinstance(result, FileOperationFailed)
+    assert destination.read_bytes() == replacement_payload
 
 
 def test_replaced_destination_is_not_deleted_when_replaced_after_link(
