@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Protocol
 
 from dart_crawler.api_models import DartListRow
@@ -25,7 +26,7 @@ class FilingService:
     """Create the five-year filing view required by the MCP contract."""
 
     def __init__(self, source: FilingSource) -> None:
-        self._source = source
+        self._source: FilingSource = source
 
     def list(
         self,
@@ -34,10 +35,25 @@ class FilingService:
         report_kind: ReportKind | str,
     ) -> Result[tuple[Filing, ...]]:
         """List valid representative filings for one company."""
+        return self._list(corp_code, report_kind, lambda _row: company_name)
+
+    def list_with_reported_company_names(
+        self,
+        corp_code: str,
+        report_kind: ReportKind | str,
+    ) -> Result[tuple[Filing, ...]]:
+        return self._list(corp_code, report_kind, lambda row: row.corp_name)
+
+    def _list(
+        self,
+        corp_code: str,
+        report_kind: ReportKind | str,
+        company_name_for: Callable[[DartListRow], str],
+    ) -> Result[tuple[Filing, ...]]:
         try:
             parsed_kind = ReportKind(report_kind)
         except ValueError:
-            return Result.failure(
+            return Result[tuple[Filing, ...]].failure(
                 error_info(
                     ErrorCode.INVALID_INPUT,
                     "report_kind가 지원 범위에 없습니다.",
@@ -48,7 +64,7 @@ class FilingService:
             corp_code, _detail_type(parsed_kind)
         )
         if not source_result.ok or source_result.data is None:
-            return Result.failure(
+            return Result[tuple[Filing, ...]].failure(
                 source_result.error
                 if source_result.error is not None
                 else error_info(
@@ -80,7 +96,7 @@ class FilingService:
             filings.append(
                 Filing(
                     corp_code=corp_code,
-                    company_name=company_name,
+                    company_name=company_name_for(representative),
                     report_kind=parsed_kind,
                     report_period=period,
                     fiscal_year=fiscal_year,
@@ -93,7 +109,7 @@ class FilingService:
                     ),
                 )
             )
-        return Result.success(tuple(_limit_years(filings)))
+        return Result[tuple[Filing, ...]].success(tuple(_limit_years(filings)))
 
 
 def _detail_type(report_kind: ReportKind) -> str:

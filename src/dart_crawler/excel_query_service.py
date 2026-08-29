@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, override
 
 from pydantic import SecretStr
 
@@ -15,6 +15,7 @@ from dart_crawler.domains.material_events import MaterialEventData
 from dart_crawler.domains.ownership import OwnershipReportData
 from dart_crawler.domains.registration_statements import RegistrationStatementData
 from dart_crawler.domains.report_topics import ReportTopicData
+from dart_crawler.filing_service import FilingService
 from dart_crawler.http_client import HttpClient
 from dart_crawler.query_limits import QueryPolicy
 from dart_crawler.result import Result
@@ -118,13 +119,26 @@ class ExcelQueryServiceFactory(Protocol):
     def create(self, policy: QueryPolicy) -> ExcelQueryService: ...
 
 
+class ExcelCrawlerService(CrawlerService):
+    @override
+    def list_report_filings(
+        self,
+        corp_code: str,
+        report_kind: ReportKind | str,
+    ) -> Result[tuple[Filing, ...]]:
+        return FilingService(self._api).list_with_reported_company_names(
+            corp_code,
+            report_kind,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class CrawlerServiceFactory:
     api_key: SecretStr
     http_client: HttpClient
 
     def create(self, policy: QueryPolicy) -> ExcelQueryService:
-        return CrawlerService(
+        return ExcelCrawlerService(
             self.api_key,
             self.http_client,
             limits=policy,
