@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum, unique
-from typing import TypeVar
+from typing import ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -47,7 +47,7 @@ class WarningCode(StrEnum):
 class ErrorInfo(BaseModel):
     """Structured failure data safe to serialize to an MCP client."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
 
     code: ErrorCode
     message: str
@@ -58,29 +58,26 @@ class ErrorInfo(BaseModel):
 class WarningInfo(BaseModel):
     """Structured non-fatal warning data."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
 
     code: WarningCode
     message: str
     details: JsonObject = Field(default_factory=dict)
 
 
-T = TypeVar("T")
+class TypedResult[T, W](BaseModel):
+    """Shared result envelope whose warning model is boundary-specific."""
 
-
-class Result[T](BaseModel):
-    """Result envelope with one success or failure shape."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
 
     ok: bool
     data: T | None = None
     error: ErrorInfo | None = None
-    warnings: tuple[WarningInfo, ...] = ()
+    warnings: tuple[W, ...] = ()
     next_action: str | None = None
 
     @model_validator(mode="after")
-    def validate_contract(self) -> Result[T]:
+    def validate_contract(self) -> Self:
         """Reject envelopes that mix success and failure fields."""
         if self.ok and (self.error is not None or self.data is None):
             msg = "successful results require data and cannot contain an error"
@@ -95,9 +92,9 @@ class Result[T](BaseModel):
         cls,
         data: T,
         *,
-        warnings: tuple[WarningInfo, ...] = (),
+        warnings: tuple[W, ...] = (),
         next_action: str | None = None,
-    ) -> Result[T]:
+    ) -> Self:
         """Construct a successful envelope."""
         return cls(ok=True, data=data, warnings=warnings, next_action=next_action)
 
@@ -106,9 +103,9 @@ class Result[T](BaseModel):
         cls,
         error: ErrorInfo,
         *,
-        warnings: tuple[WarningInfo, ...] = (),
+        warnings: tuple[W, ...] = (),
         next_action: str | None = None,
-    ) -> Result[T]:
+    ) -> Self:
         """Construct a failed envelope."""
         return cls(
             ok=False,
@@ -116,6 +113,10 @@ class Result[T](BaseModel):
             warnings=warnings,
             next_action=next_action,
         )
+
+
+class Result[T](TypedResult[T, WarningInfo]):
+    """Default public result envelope with the stable shared warnings."""
 
 
 def error_info(

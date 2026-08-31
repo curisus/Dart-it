@@ -113,13 +113,13 @@ DART에서 원하는 숫자를 분석하기 전에는 회사 검색, 공시 선�
 | 시작 방법 | 서버 주소를 MCP 클라이언트에 등록 | `uvx`로 사용자 컴퓨터에서 실행하고 MCP 클라이언트에 등록 |
 | 연결 방식 | Streamable HTTP: 인터넷을 통한 요청·응답 연결 | stdio: 로컬 프로그램끼리 표준 입력과 표준 출력으로 통신하는 연결 |
 | OpenDART API 키 | 각 도구 요청의 헤더 또는 URL에서 읽음 | 환경변수 또는 프로젝트 `.env`에서 읽음 |
-| 제공 도구 | 조회 도구 13개 | 조회 도구 13개 + 파일 생성 도구 2개, 총 15개 |
+| 제공 도구 | 공통 조회 13개 + 대용량 페이지 조회 1개, 총 14개 | 공통 조회 13개 + 파일 생성 3개, 총 16개 |
 | 결과 | 구조화된 데이터 | 구조화된 데이터 + 로컬 Excel·Markdown 파일 |
 | 출력 폴더 | 사용하지 않음 | `DART_MCP_OUTPUT_DIR` 또는 프로젝트 폴더의 `output` |
 | 처리 단위 | 각 HTTP 요청을 독립적으로 처리 | 로컬 MCP 프로세스가 요청을 처리 |
 | 적합한 경우 | 설치 없이 Claude for Excel·웹·터미널에서 조회 | 파일 생성이 필요하거나 원격 Dart it을 거치지 않고 OpenDART를 호출하려는 경우 |
 
-원격과 로컬의 13개 조회 도구는 이름, 입력값, 설명이 같습니다. 차이는 로컬에서만 `export_report_excel`과 `export_report_markdown`을 제공한다는 점입니다.
+원격과 로컬의 13개 일반 조회 도구는 이름, 입력값, 설명이 같습니다. 원격은 `load_excel_page`로 대용량 데이터를 여러 응답에 나누어 전달합니다. 로컬은 `export_report_excel`, `export_report_markdown`, `export_query_excel`로 파일을 생성합니다.
 
 ## 온보딩과 연결 방법
 
@@ -208,30 +208,39 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 
 | 구분 | 도구 | 주요 입력 | 하는 일과 기준 |
 | --- | --- | --- | --- |
-| 회사·공시 | `search_companies` | `company_query`, `report_kind` | 회사명 또는 6자리 종목코드로 최대 5개 회사를 찾습니다. `report_kind`는 `audit`, `quarterly_review`, `half_year_review` 중 하나입니다. |
+| 회사·공시 | `search_companies` | `company_query`, 선택적 `report_kind` | `report_kind`를 생략하거나 `null`로 두면 OpenDART 회사코드 전체에서 최대 5개를 순위화합니다(시장구분은 `null`). 지정하면 `audit`, `quarterly_review`, `half_year_review` 공시가 있는 회사만 찾습니다. |
 | 회사·공시 | `list_report_filings` | `corp_code`, `report_kind` | 최근 5개 사업연도의 대표 공시를 반환합니다. 정정 계열은 묶고 철회된 공시는 제외합니다. |
 | 회사·공시 | `list_report_attachments` | `rcept_no` | 선택 가능한 별도·연결 첨부를 반환합니다. 식별자는 `opendart:접수번호:파일명` 또는 `viewer:접수번호:dcmNo` 형식입니다. |
 | 첨부 원문 | `list_report_sections` | `rcept_no`, `attachment_id` | 첨부문서의 목차를 내용 없이 반환합니다. 각 항목에는 `section_id`, 제목, 종류, 블록·표·셀·텍스트 수, 이미지 포함 여부가 들어갑니다. |
 | 첨부 원문 | `get_report_sections` | `rcept_no`, `attachment_id`, `section_ids`, `section_kinds` | 선택한 구역의 문단과 표를 원문 순서로 반환합니다. 식별자 또는 종류 중 하나 이상이 필요하고, 둘 다 주면 합집합을 반환합니다. `statements`는 핵심 재무제표 4종을 뜻합니다. |
 | 공식 재무정보 | `get_financial_statements` | `corp_code`, `bsns_year`, `reprt_code`, `fs_div` | 한 회사·한 기간의 공식 계정과목 전체를 반환합니다. `fs_div`는 기본 `CFS`(연결) 또는 `OFS`(별도)입니다. 금액은 OpenDART 원문 문자열로 유지합니다. |
-| 공식 재무정보 | `get_major_accounts` | `corp_codes`, `bsns_year`, `reprt_code` | 최대 10개 회사의 주요 재무상태표·손익계산서 계정을 한 번에 반환합니다. |
-| 공식 재무정보 | `get_financial_indicators` | `corp_codes`, `bsns_year`, `reprt_code`, `idx_cl_code` | 최대 10개 회사의 수익성·안정성·성장성·활동성 지표 중 한 분류를 반환합니다. |
-| 정기보고서 | `get_report_topics` | `corp_code`, `bsns_year`, `reprt_code`, `topics` | 감사인, 배당, 주주, 임직원, 보수, 채무증권, 자금 사용 등 주요정보 28종 중 최대 10개를 반환합니다. |
+| 공식 재무정보 | `get_major_accounts` | `corp_codes`, `bsns_year`, `reprt_code` | 최대 100개 회사의 주요 재무상태표·손익계산서 계정을 한 번에 반환합니다. |
+| 공식 재무정보 | `get_financial_indicators` | `corp_codes`, `bsns_year`, `reprt_code`, `idx_cl_code` | 최대 100개 회사의 수익성·안정성·성장성·활동성 지표 중 한 분류를 반환합니다. |
+| 정기보고서 | `get_report_topics` | `corp_code`, `bsns_year`, `reprt_code`, `topics` | 감사인, 배당, 주주, 임직원, 보수, 채무증권, 자금 사용 등 등록된 주요정보 28종을 한 요청에서 모두 선택할 수 있습니다. |
 | 기업정보 | `get_company_profile` | `corp_code` | 회사명, 대표자, 시장구분, 등록번호, 주소, 홈페이지·IR 주소, 연락처, 업종, 설립일, 결산월을 반환합니다. |
 | 지분공시 | `get_ownership_reports` | `corp_code`, `report_type`, `bgn_de`, `end_de` | 5% 대량보유 또는 임원·주요주주 소유보고를 반환합니다. 시작일과 종료일은 선택이며 한쪽만 지정할 수도 있습니다. |
-| 주요사항보고 | `get_material_events` | `corp_code`, `event_types`, `bgn_de`, `end_de` | 주요사항보고 36종 중 최대 10개를 조회합니다. 접수 시작일·종료일은 모두 필수입니다. |
+| 주요사항보고 | `get_material_events` | `corp_code`, `event_types`, `bgn_de`, `end_de` | 등록된 주요사항보고 36종을 한 요청에서 모두 선택할 수 있습니다. 접수 시작일·종료일은 모두 필수입니다. |
 | 증권신고서 | `get_registration_statements` | `corp_code`, `stmt_type`, `bgn_de`, `end_de` | 증권신고서 주요정보 6종 중 한 종류를 공식 그룹 제목별로 반환합니다. 접수 시작일·종료일은 모두 필수입니다. |
 
 `corp_code`는 `search_companies`에서 확인하는 8자리 DART 고유번호이며 6자리 종목코드와 다릅니다. `bgn_de`와 `end_de`는 `YYYYMMDD` 형식입니다. `section_kinds`는 `opinion`, `balance_sheet`, `income`, `equity`, `cash_flow`, `note`, `other`와 핵심 재무제표 4종을 한 번에 고르는 `statements`를 지원합니다.
 
-### 로컬 전용 파일 생성 도구 2개
+### 원격 전용 대용량 데이터 도구 1개
+
+| 도구 | 주요 입력 | 결과와 반복 규칙 |
+| --- | --- | --- |
+| `load_excel_page` | `domain`, `arguments`, 선택적 `page_size`, `cursor` | 13개 조회 영역의 데이터를 Excel과 같은 행·열 구조로 반환합니다. 첫 호출은 `cursor=null`이고, `next_cursor`가 값이면 같은 입력에서 `cursor`만 바꾸어 즉시 다시 호출합니다. `next_cursor=null`까지 받은 행을 순서대로 이어 붙입니다. |
+
+한 번의 최종 HTTP 응답은 정확히 `3,500,000`바이트 미만이어야 합니다. `page_size`는 최대 1,000행이지만 응답이 한도에 가까우면 자동으로 줄어듭니다. 한 행은 둘로 나누지 않습니다. 한 행 또는 열·경고·출처 정보만으로 한도를 넘으면 로컬 `export_query_excel` 사용을 안내하는 오류가 반환됩니다. 자세한 계약은 [대용량 Excel 데이터 전달 계약](docs/unlimited_excel_delivery.md)을 확인하세요.
+
+### 로컬 전용 파일 생성 도구 3개
 
 | 도구 | 주요 입력 | 결과와 검증 |
 | --- | --- | --- |
 | `export_report_excel` | `rcept_no`, `attachment_id` | 선택한 첨부를 검색·계산 가능한 `.xlsx`로 생성합니다. `수집정보` 시트와 원문 순서의 구역별 시트를 만들고, 저장 후 원문 셀·병합 범위와 다시 대조합니다. 재무상태표, 손익·포괄손익, 자본변동표, 현금흐름표 중 누락이 있으면 파일을 만들지 않습니다. |
 | `export_report_markdown` | `rcept_no`, `attachment_id` | 선택한 첨부의 의견·재무제표·주석·기타 구역을 원문 순서의 `.md` 파일 하나로 생성합니다. 핵심 재무제표가 빠져도 있는 내용을 생성하고 `missing_sections`와 `collection_status`로 알립니다. |
+| `export_query_excel` | `domain`, `arguments` | 13개 조회 영역 중 하나의 전체 정규화 결과를 `.xlsx`로 생성합니다. 사용자가 경로나 파일명을 지정하지 않으며, `DART_MCP_OUTPUT_DIR` 또는 프로젝트의 `output` 폴더에 `<domain>.xlsx`, `<domain>_2.xlsx` 순서로 저장합니다. |
 
-두 도구는 접수번호, 첨부 식별자, 원문 SHA-256 값이 같은 기존 파일을 재사용합니다. SHA-256은 같은 원문인지 확인하기 위한 고정 길이 식별값입니다. 이미지 전용 내용은 OCR하지 않고 자리표시자로 남기며, 이 경우 `partial` 상태와 경고가 반환될 수 있습니다.
+기존 첨부 파일 생성 도구 2개는 접수번호, 첨부 식별자, 원문 SHA-256 값이 같은 기존 파일을 재사용합니다. SHA-256은 같은 원문인지 확인하기 위한 고정 길이 식별값입니다. 이미지 전용 내용은 OCR하지 않고 자리표시자로 남기며, 이 경우 `partial` 상태와 경고가 반환될 수 있습니다.
 
 ## Result 응답 형식
 
@@ -297,13 +306,13 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 2. `Authorization: Bearer 발급받은_키`
 3. URL의 `?key=발급받은_키`
 
-`X-OpenDART-API-Key`와 `Authorization`을 함께 보내면 전자가 우선합니다. 유효한 헤더가 없을 때만 URL의 `key` 값을 확인합니다. 서버 연결 초기화와 도구 목록 확인은 키 없이 가능하지만, 도구 호출에는 키가 필요하며 없으면 Result 안의 `CONFIG_ERROR`로 응답합니다.
+`X-OpenDART-API-Key`와 `Authorization`을 함께 보내면 전자가 우선합니다. 비어 있지 않고 올바른 Bearer 값도 없을 때만 URL의 마지막 `key` 값을 한 번 해석하고 앞뒤 공백을 제거해 사용합니다. 서버 연결 초기화와 도구 목록 확인은 키 없이 가능하지만, 도구 호출에는 키가 필요하며 없으면 Result 안의 `CONFIG_ERROR`로 응답합니다.
 
 현재 구현은 원격 도구 요청마다 키를 읽어 OpenDART 요청에 사용하고, 해당 요청을 처리하는 서비스 객체를 새로 만듭니다. 이 저장소의 애플리케이션 코드에는 API 키를 데이터베이스나 출력 파일에 기록하는 기능이 없습니다. 다만 MCP 클라이언트, 배포 플랫폼, 네트워크 장비가 보관하는 설정이나 접속 기록까지 이 저장소가 통제하거나 보존 여부를 보장하지는 않습니다.
 
-- 가능하면 URL보다 헤더를 사용하세요. URL은 접속 기록에 포함될 가능성이 더 큽니다.
+- `X-OpenDART-API-Key` 또는 `Authorization: Bearer` 헤더를 권장합니다. `?key=`는 일부 Claude 연결 환경에서 관찰된 호환 경로일 뿐 공급자가 계속 지원한다고 보장하는 방식이 아니며, URL은 접속 기록에 포함될 가능성이 더 큽니다.
 - 로컬 `.env`는 Git에 포함하지 마세요. 이 저장소의 `.gitignore`는 `.env`와 `.env.*`를 제외하고 `.env.example`만 허용합니다.
-- API 키가 노출되었다면 OpenDART에서 기존 키를 폐기하거나 재발급하세요.
+- API 키가 노출되었다면 OpenDART에서 기존 키를 즉시 폐기하거나 재발급하고, 클라이언트 설정·환경변수·배포 비밀값을 새 키로 교체하세요.
 - 로컬 모드는 원격 Dart it 서버를 거치지 않고 사용자 컴퓨터의 프로세스가 OpenDART를 직접 호출합니다.
 
 ## 지원 범위와 제한
@@ -334,13 +343,17 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 ### 응답 크기 제한
 
 - 회사 검색 결과: 최대 5개
-- 여러 회사 비교: 한 번에 최대 10개 회사
-- 정기보고서 topic과 주요사항 event type: 한 번에 최대 10개
+- 여러 회사 비교: 공식 주요계정·재무지표 API 범위 안에서 한 번에 최대 100개 회사
+- 정기보고서 topic과 주요사항 event type: 현재 등록된 값 전체
 - 첨부 구역 내용: 최대 20,000개 표 셀, 서술 텍스트 최대 200,000자
 - OpenDART 행 기반 조회: 최대 1,000행
 - 정기보고서·지분공시·주요사항보고·증권신고서 조회의 반환 텍스트: 최대 200,000자
 
-한도를 넘은 요청은 일부만 잘라 반환하지 않고 실패로 처리합니다. `next_action`에 따라 회사, topic, event type, 기간 또는 구역을 나누어 다시 요청하세요.
+위 한도는 일반 조회 도구에 적용됩니다. 한도를 넘은 일반 조회는 일부만 잘라 반환하지 않고 실패로 처리합니다. `load_excel_page`는 행·셀·문자 총량 제한 대신 호출당 최종 응답을 `3,500,000`바이트 미만으로 나누며, 전체 행 수에는 애플리케이션 상한을 두지 않습니다. 다만 OpenDART의 이용 제한과 Vercel의 실행시간·메모리·호출량 제한은 그대로 적용됩니다.
+
+### 로컬 조회 결과 XLSX 제한
+
+`export_query_excel`은 데이터 시트마다 헤더 1행과 데이터 최대 1,048,575행을 저장하고, 열은 최대 16,384개까지 허용합니다. 긴 문자열은 Excel 한계에 맞춰 32,767자로 자릅니다. 큰 정수와 실수는 Excel 저장 방식 때문에 원격 JSON과 정밀도나 다시 열린 타입이 달라질 수 있습니다. `=`, `+`, `-`, `@`로 시작하는 문자열도 수식으로 실행되지 않도록 문자열 셀로 저장합니다. 상세한 정밀도·빈 문자열·음수 0 처리 기준은 [대용량 Excel 데이터 전달 계약](docs/unlimited_excel_delivery.md)에 정리되어 있습니다.
 
 ### 지원 값 상세
 
@@ -401,6 +414,14 @@ uv run mypy --strict src tests
 uv run pytest -v
 uv build
 ```
+
+10,000행×20열 성능 검증은 다음 명령으로 서로 다른 Windows 프로세스 3개를 실행합니다.
+
+```powershell
+uv run --script scripts/benchmark_excel_pipeline.py --runs 3 --rows 10000 --columns 20 --output benchmark.json
+```
+
+측정값은 특정 장비에서 관찰한 결과이며 서비스 처리시간 보장이 아닙니다. 재현 조건과 각 실행값은 [Excel 성능 검증 기록](docs/excel_performance_validation.md)을 확인하세요.
 
 실제 OpenDART 네트워크와 API 키를 사용하는 검사는 별도로 실행합니다.
 

@@ -15,6 +15,11 @@ import re
 from dataclasses import dataclass
 from typing import Final
 
+from dart_crawler.query_limits import (
+    DEFAULT_QUERY_LIMITS,
+    MAX_COMPANIES_PER_QUERY,
+    QueryLimits,
+)
 from dart_crawler.result import ErrorCode, ErrorInfo, JsonObject, error_info
 
 # Kept as sorted tuples (rather than frozensets) so the same values that
@@ -29,12 +34,6 @@ VALID_IDX_CL_CODES: Final[tuple[str, ...]] = (
     "M230000",
     "M240000",
 )
-MAX_COMPANIES_PER_QUERY: Final = 10
-MAX_TOPICS_PER_QUERY: Final = 10
-# Rows are ~20 fields wide; 1,000 rows x 20 fields ~= the 20,000-cell budget
-# that section_models.MAX_RESPONSE_CELLS enforces for report sections.
-MAX_RESPONSE_ROWS: Final = 1_000
-
 _CORP_CODE_PATTERN: Final = re.compile(r"^\d{8}$", re.ASCII)
 _DATE_PATTERN: Final = re.compile(r"^\d{8}$", re.ASCII)
 _SEARCH_COMPANIES_NEXT_ACTION: Final = "search_companies로 corp_code(8자리)를 확인하세요."
@@ -138,8 +137,13 @@ def guard_corp_code(corp_code: str) -> GuardViolation | None:
     )
 
 
-def guard_corp_codes(corp_codes: tuple[str, ...]) -> GuardViolation | None:
+def guard_corp_codes(
+    corp_codes: tuple[str, ...],
+    *,
+    limits: QueryLimits = DEFAULT_QUERY_LIMITS,
+) -> GuardViolation | None:
     """Reject an empty, oversized, or malformed corp_code tuple."""
+    del limits
     if not corp_codes:
         return GuardViolation(
             error_info(
@@ -179,6 +183,7 @@ def guard_corp_codes(corp_codes: tuple[str, ...]) -> GuardViolation | None:
 def guard_row_count(
     row_count: int,
     *,
+    limits: QueryLimits = DEFAULT_QUERY_LIMITS,
     next_action: str | None = None,
 ) -> GuardViolation | None:
     """Reject a response that would carry more rows than the response budget.
@@ -186,14 +191,38 @@ def guard_row_count(
     The caller is expected to split its request rather than receive a
     truncated response, so this never trims rows itself.
     """
-    if row_count <= MAX_RESPONSE_ROWS:
+    limit = limits.max_response_rows
+    if limit is None or row_count <= limit:
         return None
     return GuardViolation(
         error_info(
             ErrorCode.INVALID_INPUT,
             "응답 행 수가 한 번에 반환할 수 있는 한도를 초과했습니다.",
             retryable=False,
-            details={"returned_row_count": row_count, "limit": MAX_RESPONSE_ROWS},
+            details={"returned_row_count": row_count, "limit": limit},
+        ),
+        next_action=next_action,
+    )
+
+
+def guard_text_char_count(
+    text_char_count: int,
+    *,
+    limits: QueryLimits = DEFAULT_QUERY_LIMITS,
+    next_action: str | None = None,
+) -> GuardViolation | None:
+    limit = limits.max_response_text_chars
+    if limit is None or text_char_count <= limit:
+        return None
+    return GuardViolation(
+        error_info(
+            ErrorCode.INVALID_INPUT,
+            "응답 텍스트 분량이 한 번에 반환할 수 있는 한도를 초과했습니다.",
+            retryable=False,
+            details={
+                "returned_text_char_count": text_char_count,
+                "text_char_limit": limit,
+            },
         ),
         next_action=next_action,
     )

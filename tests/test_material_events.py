@@ -4,11 +4,15 @@ from dataclasses import dataclass, field
 import pytest
 
 from dart_crawler.domains.material_events import MATERIAL_EVENTS, MaterialEventService
-from dart_crawler.domains.query_guards import MAX_RESPONSE_ROWS, MAX_TOPICS_PER_QUERY
 from dart_crawler.domains.registry import RegistryEntry, as_registry
 from dart_crawler.mcp_server import mcp
+from dart_crawler.query_limits import (
+    LOCAL_QUERY_LIMITS,
+    MAX_RESPONSE_ROWS,
+    MAX_RESPONSE_TEXT_CHARS,
+    MAX_TOPICS_PER_QUERY,
+)
 from dart_crawler.result import ErrorCode, JsonObject, Result, WarningCode, error_info
-from dart_crawler.section_models import MAX_RESPONSE_TEXT_CHARS
 
 _CORP_CODE = "00126380"
 _BGN_DE = "20240101"
@@ -250,6 +254,26 @@ def test_get_rejects_more_than_the_event_type_limit_without_calling_source() -> 
     assert source.calls == []
 
 
+def test_local_profile_still_rejects_eleven_event_types_without_calling_source() -> None:
+    assert not hasattr(LOCAL_QUERY_LIMITS, "max_topics_per_query")
+    source = RecordingMaterialEventSource()
+    service = MaterialEventService(source, limits=LOCAL_QUERY_LIMITS)
+    event_types = tuple(
+        f"event_{index}" for index in range(MAX_TOPICS_PER_QUERY + 1)
+    )
+
+    result = service.get(_CORP_CODE, event_types, _BGN_DE, _END_DE)
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.error.details == {
+        "event_type_count": MAX_TOPICS_PER_QUERY + 1,
+        "limit": MAX_TOPICS_PER_QUERY,
+    }
+    assert source.calls == []
+
+
 def test_get_rejects_duplicate_event_types_without_calling_source() -> None:
     source = RecordingMaterialEventSource()
     service = MaterialEventService(source)
@@ -464,3 +488,23 @@ def test_get_rejects_text_over_the_char_budget_and_drops_rows() -> None:
     assert returned_text_char_count > MAX_RESPONSE_TEXT_CHARS
     assert result.error.details["text_char_limit"] == MAX_RESPONSE_TEXT_CHARS
     assert result.next_action == "기간을 좁히거나 event_type을 나누어 호출하세요."
+
+
+def test_get_accepts_over_remote_response_limits_with_local_limits() -> None:
+    # Given
+    rows = (
+        *(_event_row(seq=str(index)) for index in range(MAX_RESPONSE_ROWS)),
+        _event_row(repror="가" * (MAX_RESPONSE_TEXT_CHARS + 1)),
+    )
+    source = RecordingMaterialEventSource(
+        results={_BANKRUPTCY_ENDPOINT: Result.success(rows)}
+    )
+    service = MaterialEventService(source, limits=LOCAL_QUERY_LIMITS)
+
+    # When
+    result = service.get(_CORP_CODE, ("bankruptcy",), _BGN_DE, _END_DE)
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.returned_row_count == MAX_RESPONSE_ROWS + 1

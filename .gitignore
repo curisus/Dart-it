@@ -7,6 +7,9 @@ __pycache__/
 .mypy_cache/
 .coverage
 htmlcov/
+coverage.xml
+.hypothesis/
+.tox/
 build/
 dist/
 *.egg-info/
@@ -18,14 +21,25 @@ output/
 *.zip
 *.xlsx
 *.pdf
+*.mp4
+*.log
+*.tmp
 요청사항.md
-.codegraph
+.codegraph/
+.codex/
+.codex_evidence/
+.agents/
 .omc/
 .omo/
 CLAUDE.md
 feedbacks/
 .claude/
 .vercel/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+manual_qa_staging.md
 
 # Session handoff documents - machine-local, never committed
 handoff/

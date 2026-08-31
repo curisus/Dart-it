@@ -34,8 +34,9 @@ from dart_crawler.document_parser import parse_attachment
 from dart_crawler.document_validation import validate_document
 from dart_crawler.domain import Attachment
 from dart_crawler.http_client import HttpxClient
+from dart_crawler.query_limits import MAX_RESPONSE_CELLS
 from dart_crawler.result import Result
-from dart_crawler.section_models import MAX_RESPONSE_CELLS, section_id
+from dart_crawler.section_models import section_id
 from dart_crawler.statement_lexicon import compact
 from dart_crawler.value_parser import parse_cell_value
 

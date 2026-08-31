@@ -9,9 +9,9 @@ dependencies = [
     "defusedxml>=0.7.1",
     "httpx2[http2,brotli,zstd]>=0.1.0",
     "lxml>=5.3",
-    "mcp>=2.0.0",
-    "openpyxl>=3.1",
-    "pydantic>=2.10",
+    "mcp==2.0.0",
+    "openpyxl==3.1.5",
+    "pydantic==2.13.4",
     "pydantic-settings>=2.7",
 ]
 
@@ -53,6 +53,7 @@ reportPrivateUsage = "error"
 [tool.mypy]
 python_version = "3.13"
 strict = true
+mypy_path = "src"
 files = ["src", "tests"]
 
 [tool.ruff]

@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/initial_mcp_server]
+    branches: [main, feat/initial_mcp_server, codex/feat/unlimited_excel_mcp]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:

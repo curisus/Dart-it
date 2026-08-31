@@ -14,19 +14,10 @@ from dart_crawler.document_model import (
     ParsedDocument,
     SectionKind,
 )
+from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
 from dart_crawler.result import ErrorCode, JsonObject, Result, error_info
 from dart_crawler.statement_lexicon import statement_kinds
 
-# One response must stay small enough for a client context window. Selections
-# above the limit fail: truncating would return data no cross-check can verify.
-MAX_RESPONSE_CELLS: Final = 20_000
-# Tables and narrative are measured separately because a notes-only or
-# opinion-only selection holds no cells at all, so the cell limit never sees it.
-# A whole real report stays far below this bound — the 47-section 삼성전자 audit
-# report carries 29,611 narrative characters in total — so no honest request is
-# refused, while the selections that produce the 159-533KB responses the design
-# calls too big are split up.
-MAX_RESPONSE_TEXT_CHARS: Final = 200_000
 STATEMENTS_ALIAS: Final = "statements"
 
 _SECTION_ID_PATTERN: Final = re.compile(r"^s(\d{3,})-([a-z_]+)$")
@@ -188,6 +179,8 @@ def select_sections(
     document: ParsedDocument,
     section_ids: tuple[str, ...],
     section_kinds: tuple[str, ...],
+    *,
+    limits: QueryLimits = DEFAULT_QUERY_LIMITS,
 ) -> Result[tuple[SectionData, ...]]:
     """Return the union of the sections named by identifier and by kind."""
     if not section_ids and not section_kinds:
@@ -237,7 +230,7 @@ def select_sections(
             ),
             next_action=_RETRY_LISTING_NEXT_ACTION,
         )
-    oversized = _oversized_selection(selected)
+    oversized = _oversized_selection(selected, limits)
     if oversized is not None:
         return oversized
     return Result.success(selected)
@@ -291,6 +284,7 @@ def _section_block(block: DocumentBlock) -> SectionBlock:
 
 def _oversized_selection(
     selected: tuple[SectionData, ...],
+    limits: QueryLimits,
 ) -> Result[tuple[SectionData, ...]] | None:
     """Reject a selection that outgrows either response limit.
 
@@ -299,26 +293,32 @@ def _oversized_selection(
     """
     selected_cell_count = returned_cell_count(selected)
     selected_text_char_count = returned_text_char_count(selected)
-    over_text = selected_text_char_count > MAX_RESPONSE_TEXT_CHARS
-    if selected_cell_count > MAX_RESPONSE_CELLS:
+    cell_limit = limits.max_response_cells
+    text_limit = limits.max_response_text_chars
+    exceeded_text_limit = (
+        text_limit
+        if text_limit is not None and selected_text_char_count > text_limit
+        else None
+    )
+    if cell_limit is not None and selected_cell_count > cell_limit:
         details: JsonObject = {
             "selected_cell_count": selected_cell_count,
-            "limit": MAX_RESPONSE_CELLS,
+            "limit": cell_limit,
         }
-        if over_text:
+        if exceeded_text_limit is not None:
             details["selected_text_char_count"] = selected_text_char_count
-            details["text_char_limit"] = MAX_RESPONSE_TEXT_CHARS
+            details["text_char_limit"] = exceeded_text_limit
         return _invalid_input(
             "선택한 구역의 셀 수가 한 번에 반환할 수 있는 한도를 초과했습니다.",
             details=details,
             next_action=_SPLIT_SELECTION_NEXT_ACTION,
         )
-    if over_text:
+    if exceeded_text_limit is not None:
         return _invalid_input(
             "선택한 구역의 서술 텍스트 분량이 한 번에 반환할 수 있는 한도를 초과했습니다.",
             details={
                 "selected_text_char_count": selected_text_char_count,
-                "limit": MAX_RESPONSE_TEXT_CHARS,
+                "limit": exceeded_text_limit,
             },
             next_action=_SPLIT_SELECTION_NEXT_ACTION,
         )

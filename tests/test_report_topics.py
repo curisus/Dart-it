@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 import pytest
 
 from dart_crawler.dart_api import DartApi
-from dart_crawler.domains.query_guards import MAX_RESPONSE_ROWS, MAX_TOPICS_PER_QUERY
 from dart_crawler.domains.report_topics import (
     REPORT_TOPICS,
     ReportTopic,
@@ -13,8 +12,13 @@ from dart_crawler.domains.report_topics import (
 )
 from dart_crawler.http_client import HttpResponse
 from dart_crawler.mcp_server import mcp
+from dart_crawler.query_limits import (
+    LOCAL_QUERY_LIMITS,
+    MAX_RESPONSE_ROWS,
+    MAX_RESPONSE_TEXT_CHARS,
+    MAX_TOPICS_PER_QUERY,
+)
 from dart_crawler.result import ErrorCode, JsonObject, Result, WarningCode, error_info
-from dart_crawler.section_models import MAX_RESPONSE_TEXT_CHARS
 
 _CORP_CODE = "00126380"
 _BSNS_YEAR = 2023
@@ -191,6 +195,24 @@ def test_get_rejects_more_than_the_topic_limit_without_calling_source() -> None:
     result = service.get(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, topics)
 
     # Then
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.error.details == {
+        "topic_count": MAX_TOPICS_PER_QUERY + 1,
+        "limit": MAX_TOPICS_PER_QUERY,
+    }
+    assert source.calls == []
+
+
+def test_local_profile_still_rejects_eleven_topics_without_calling_source() -> None:
+    assert not hasattr(LOCAL_QUERY_LIMITS, "max_topics_per_query")
+    source = RecordingReportTopicSource()
+    service = ReportTopicService(source, limits=LOCAL_QUERY_LIMITS)
+    topics = tuple(f"topic_{index}" for index in range(MAX_TOPICS_PER_QUERY + 1))
+
+    result = service.get(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, topics)
+
     assert result.ok is False
     assert result.error is not None
     assert result.error.code is ErrorCode.INVALID_INPUT
@@ -428,6 +450,26 @@ def test_get_rejects_text_over_the_char_budget_and_drops_rows() -> None:
     assert returned_text_char_count > MAX_RESPONSE_TEXT_CHARS
     assert result.error.details["text_char_limit"] == MAX_RESPONSE_TEXT_CHARS
     assert result.next_action == "topic을 나누어 호출하세요."
+
+
+def test_get_accepts_over_remote_response_limits_with_local_limits() -> None:
+    # Given
+    rows = (
+        *(_topic_row(seq=str(index)) for index in range(MAX_RESPONSE_ROWS)),
+        _topic_row(adt_opinion="가" * (MAX_RESPONSE_TEXT_CHARS + 1)),
+    )
+    source = RecordingReportTopicSource(
+        results={_AUDIT_OPINION_ENDPOINT: Result.success(rows)}
+    )
+    service = ReportTopicService(source, limits=LOCAL_QUERY_LIMITS)
+
+    # When
+    result = service.get(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, ("audit_opinion",))
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.returned_row_count == MAX_RESPONSE_ROWS + 1
 
 
 # --- transport (DartApi.fetch_report_topic_rows) ------------------------------

@@ -8,9 +8,12 @@ from dart_crawler.domains.ownership import (
     OwnershipService,
     _as_report_registry,
 )
-from dart_crawler.domains.query_guards import MAX_RESPONSE_ROWS
+from dart_crawler.query_limits import (
+    LOCAL_QUERY_LIMITS,
+    MAX_RESPONSE_ROWS,
+    MAX_RESPONSE_TEXT_CHARS,
+)
 from dart_crawler.result import ErrorCode, JsonObject, Result, WarningCode, error_info
-from dart_crawler.section_models import MAX_RESPONSE_TEXT_CHARS
 
 _CORP_CODE = "00126380"
 _MAJOR_HOLDING_ENDPOINT = OWNERSHIP_REPORTS["major_holding"].endpoint
@@ -459,6 +462,26 @@ def test_get_rejects_text_over_the_char_budget() -> None:
     assert result.next_action is not None
     assert "bgn_de" in result.next_action
     assert "end_de" in result.next_action
+
+
+def test_get_accepts_over_remote_response_limits_with_local_limits() -> None:
+    # Given
+    rows = (
+        *(_row(seq=str(index)) for index in range(MAX_RESPONSE_ROWS)),
+        _row(repror="가" * (MAX_RESPONSE_TEXT_CHARS + 1)),
+    )
+    source = RecordingOwnershipSource(
+        results={_MAJOR_HOLDING_ENDPOINT: Result.success(rows)}
+    )
+    service = OwnershipService(source, limits=LOCAL_QUERY_LIMITS)
+
+    # When
+    result = service.get(_CORP_CODE, "major_holding")
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.returned_row_count == MAX_RESPONSE_ROWS + 1
 
 
 def test_get_rejects_over_limit_filtered_rows_and_next_action_mentions_date_range() -> (

@@ -48,6 +48,12 @@ _WEAK_MATCH_SCORE: Final[float] = 85.0
 _WEAK_MATCH_NEXT_ACTION: Final[str] = (
     "정확히 일치하는 회사명이 없습니다. 아래 번호 목록에서 회사를 선택하세요."
 )
+_ARCHIVE_NOT_FOUND_MESSAGE: Final[str] = (
+    "회사코드 목록에서 일치하는 회사를 찾지 못했습니다."
+)
+_ARCHIVE_NOT_FOUND_NEXT_ACTION: Final[str] = (
+    "회사명, 종목코드 또는 회사코드 일부를 확인하세요."
+)
 
 
 class CompanySearchService:
@@ -59,11 +65,11 @@ class CompanySearchService:
     def search(
         self,
         query: str,
-        report_kind: ReportKind | str,
+        report_kind: ReportKind | str | None,
     ) -> Result[tuple[Company, ...]]:
-        """Return up to five companies with the requested target filing."""
+        """Return up to five ranked companies, optionally filtered by filings."""
         try:
-            parsed_kind = ReportKind(report_kind)
+            parsed_kind = None if report_kind is None else ReportKind(report_kind)
         except ValueError:
             return Result.failure(
                 error_info(
@@ -114,48 +120,87 @@ class CompanySearchService:
             ),
             key=lambda match: (-match.score, match.entry.company_name),
         )
-        matches: list[Company] = []
-        selected_matches: list[_SearchMatch] = []
-        detail_type = _detail_type(parsed_kind)
-        for match in ranked[:20]:
-            entry = match.entry
-            rows_result = self._source.list_disclosures(entry.corp_code, detail_type)
-            if (
-                not rows_result.ok
-                or not rows_result.data
-                or not any(
-                    matches_report_kind(parsed_kind, row.report_nm)
-                    for row in rows_result.data
-                )
-            ):
-                continue
-            market = _market(rows_result.data)
-            matches.append(
+        matches: list[Company]
+        selected_matches: list[_SearchMatch]
+        if parsed_kind is None:
+            selected_matches = list(ranked[:5])
+            matches = [
                 Company(
-                    company_name=entry.company_name,
-                    corp_code=entry.corp_code,
-                    stock_code=entry.stock_code,
-                    market=market,
-                    ranking=len(matches) + 1,
+                    company_name=match.entry.company_name,
+                    corp_code=match.entry.corp_code,
+                    stock_code=match.entry.stock_code,
+                    market=None,
+                    ranking=ranking,
                     match_confidence=match.confidence,
                 )
+                for ranking, match in enumerate(selected_matches, start=1)
+            ]
+        else:
+            matches, selected_matches = self._filter_disclosures(
+                ranked,
+                parsed_kind,
             )
-            selected_matches.append(match)
-            if len(matches) == 5:
-                break
         if not matches:
-            return Result.failure(
-                error_info(
-                    ErrorCode.NOT_FOUND,
-                    "대상 보고서가 존재하는 회사를 찾지 못했습니다.",
-                    retryable=False,
-                ),
-                next_action="회사명, 종목코드, 보고서 종류를 확인하세요.",
-            )
+            return _not_found(parsed_kind is None)
         return Result.success(
             tuple(matches),
             next_action=_weak_match_next_action(selected_matches[0]),
         )
+
+
+    def _filter_disclosures(
+        self,
+        ranked: Sequence[_SearchMatch],
+        report_kind: ReportKind,
+    ) -> tuple[list[Company], list[_SearchMatch]]:
+        detail_type = _detail_type(report_kind)
+        matches: list[Company] = []
+        selected_matches: list[_SearchMatch] = []
+        for match in ranked[:20]:
+            rows_result = self._source.list_disclosures(
+                match.entry.corp_code,
+                detail_type,
+            )
+            if (
+                not rows_result.ok
+                or not rows_result.data
+                or not any(
+                    matches_report_kind(report_kind, row.report_nm)
+                    for row in rows_result.data
+                )
+            ):
+                continue
+            selected_matches.append(match)
+            matches.append(
+                Company(
+                    company_name=match.entry.company_name,
+                    corp_code=match.entry.corp_code,
+                    stock_code=match.entry.stock_code,
+                    market=_market(rows_result.data),
+                    ranking=len(matches) + 1,
+                    match_confidence=match.confidence,
+                )
+            )
+            if len(matches) == 5:
+                break
+        return matches, selected_matches
+
+
+def _not_found(archive_only: bool) -> Result[tuple[Company, ...]]:
+    return Result.failure(
+        error_info(
+            ErrorCode.NOT_FOUND,
+            _ARCHIVE_NOT_FOUND_MESSAGE
+            if archive_only
+            else "대상 보고서가 존재하는 회사를 찾지 못했습니다.",
+            retryable=False,
+        ),
+        next_action=(
+            _ARCHIVE_NOT_FOUND_NEXT_ACTION
+            if archive_only
+            else "회사명, 종목코드, 보고서 종류를 확인하세요."
+        ),
+    )
 
 
 def _parse_company_archive(content: bytes) -> Result[tuple[CompanyCode, ...]]:

@@ -14,14 +14,19 @@ from typing import Final, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from dart_crawler.domains.query_guards import (
-    MAX_TOPICS_PER_QUERY,
     GuardViolation,
     guard_bsns_year,
     guard_corp_code,
     guard_reprt_code,
     guard_row_count,
+    guard_text_char_count,
 )
 from dart_crawler.domains.registry import RegistryEntry, as_registry
+from dart_crawler.query_limits import (
+    DEFAULT_QUERY_LIMITS,
+    MAX_TOPICS_PER_QUERY,
+    QueryLimits,
+)
 from dart_crawler.result import (
     ErrorCode,
     JsonObject,
@@ -31,7 +36,6 @@ from dart_crawler.result import (
     WarningInfo,
     error_info,
 )
-from dart_crawler.section_models import MAX_RESPONSE_TEXT_CHARS
 
 _SPLIT_TOPICS_NEXT_ACTION: Final = "topic을 나누어 호출하세요."
 
@@ -206,10 +210,12 @@ class ReportTopicService:
         self,
         source: ReportTopicSource,
         *,
+        limits: QueryLimits = DEFAULT_QUERY_LIMITS,
         registry: Mapping[str, ReportTopic] = REPORT_TOPICS,
     ) -> None:
-        self._source = source
-        self._registry = registry
+        self._source: ReportTopicSource = source
+        self._limits: QueryLimits = limits
+        self._registry: Mapping[str, ReportTopic] = registry
 
     def get(
         self,
@@ -287,6 +293,7 @@ class ReportTopicService:
         total_row_count = sum(item.row_count for item in collected)
         row_violation = guard_row_count(
             total_row_count,
+            limits=self._limits,
             next_action=_SPLIT_TOPICS_NEXT_ACTION,
         )
         if row_violation is not None:
@@ -296,18 +303,15 @@ class ReportTopicService:
             )
 
         text_char_count = _total_text_char_count(collected)
-        if text_char_count > MAX_RESPONSE_TEXT_CHARS:
+        text_violation = guard_text_char_count(
+            text_char_count,
+            limits=self._limits,
+            next_action=_SPLIT_TOPICS_NEXT_ACTION,
+        )
+        if text_violation is not None:
             return Result.failure(
-                error_info(
-                    ErrorCode.INVALID_INPUT,
-                    "응답 텍스트 분량이 한 번에 반환할 수 있는 한도를 초과했습니다.",
-                    retryable=False,
-                    details={
-                        "returned_text_char_count": text_char_count,
-                        "text_char_limit": MAX_RESPONSE_TEXT_CHARS,
-                    },
-                ),
-                next_action=_SPLIT_TOPICS_NEXT_ACTION,
+                text_violation.error,
+                next_action=text_violation.next_action,
             )
 
         warnings: tuple[WarningInfo, ...] = ()

@@ -5,6 +5,11 @@ from dart_crawler.domains.registration_statements import (
     REGISTRATION_STATEMENTS,
     RegistrationStatementService,
 )
+from dart_crawler.query_limits import (
+    LOCAL_QUERY_LIMITS,
+    MAX_RESPONSE_ROWS,
+    MAX_RESPONSE_TEXT_CHARS,
+)
 from dart_crawler.result import ErrorCode, JsonObject, Result, error_info
 
 _CORP_CODE = "00126380"
@@ -174,7 +179,9 @@ def test_get_propagates_upstream_failure_without_data(error_code: ErrorCode) -> 
 
 def test_get_rejects_row_count_over_limit_and_drops_groups() -> None:
     """Given too many rows, then DS006 fails instead of returning truncated groups."""
-    rows = tuple(_statement_row(seq=str(index)) for index in range(1000 + 1))
+    rows = tuple(
+        _statement_row(seq=str(index)) for index in range(MAX_RESPONSE_ROWS + 1)
+    )
     groups = (DartGroup[JsonObject](title="일반사항", list=rows),)
     source = RecordingRegistrationStatementSource(
         {_EQUITY_ENDPOINT: Result.success(groups)}
@@ -188,15 +195,15 @@ def test_get_rejects_row_count_over_limit_and_drops_groups() -> None:
     assert result.error is not None
     assert result.error.code is ErrorCode.INVALID_INPUT
     assert result.error.details == {
-        "returned_row_count": 1000 + 1,
-        "limit": 1000,
+        "returned_row_count": MAX_RESPONSE_ROWS + 1,
+        "limit": MAX_RESPONSE_ROWS,
     }
     assert result.next_action == "기간을 좁혀 다시 호출하세요."
 
 
 def test_get_rejects_text_over_char_budget_and_drops_groups() -> None:
     """Given too much row text, then DS006 fails without returning partial groups."""
-    big_text = "가" * (200000 // 2 + 1)
+    big_text = "가" * (MAX_RESPONSE_TEXT_CHARS // 2 + 1)
     groups = (
         DartGroup[JsonObject](
             title="일반사항",
@@ -216,6 +223,27 @@ def test_get_rejects_text_over_char_budget_and_drops_groups() -> None:
     assert result.error.code is ErrorCode.INVALID_INPUT
     returned_text_char_count = result.error.details["returned_text_char_count"]
     assert isinstance(returned_text_char_count, int)
-    assert returned_text_char_count > 200000
-    assert result.error.details["text_char_limit"] == 200000
+    assert returned_text_char_count > MAX_RESPONSE_TEXT_CHARS
+    assert result.error.details["text_char_limit"] == MAX_RESPONSE_TEXT_CHARS
     assert result.next_action == "기간을 좁혀 다시 호출하세요."
+
+
+def test_get_accepts_over_remote_response_limits_with_local_limits() -> None:
+    # Given
+    rows = (
+        *(_statement_row(seq=str(index)) for index in range(MAX_RESPONSE_ROWS)),
+        _statement_row(note="가" * (MAX_RESPONSE_TEXT_CHARS + 1)),
+    )
+    groups = (DartGroup[JsonObject](title="일반사항", list=rows),)
+    source = RecordingRegistrationStatementSource(
+        {_EQUITY_ENDPOINT: Result.success(groups)}
+    )
+    service = RegistrationStatementService(source, limits=LOCAL_QUERY_LIMITS)
+
+    # When
+    result = service.get(_CORP_CODE, "equity_securities", _BGN_DE, _END_DE)
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.returned_row_count == MAX_RESPONSE_ROWS + 1

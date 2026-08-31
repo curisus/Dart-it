@@ -3,12 +3,13 @@ from dataclasses import dataclass, field
 import pytest
 from pydantic import SecretStr
 
-from dart_crawler.api_models import DartListRow
+from dart_crawler.api_models import DartListRow, FinancialAccount
 from dart_crawler.attachments import AttachmentService
 from dart_crawler.crawler_service import CrawlerService
-from dart_crawler.dart_api import DartApi
+from dart_crawler.dart_api import DartApi, FinancialQuery
 from dart_crawler.domain import Attachment
 from dart_crawler.http_client import HttpResponse
+from dart_crawler.query_limits import LOCAL_QUERY_LIMITS, MAX_RESPONSE_ROWS
 from dart_crawler.result import ErrorCode, Result, WarningCode, WarningInfo
 
 _RCEPT_NO = "20260515001658"
@@ -183,3 +184,41 @@ def test_get_registration_statements_delegates_to_ds006_endpoint() -> None:
     assert result.data is not None
     assert result.data.groups[0].title == "일반사항"
     assert http_client.requested_urls == ["https://opendart.fss.or.kr/api/estkRs.json"]
+
+
+def test_local_query_limits_reach_financial_domain_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given
+    accounts = tuple(
+        FinancialAccount(
+            sj_div="BS",
+            bsns_year="2023",
+            reprt_code="11011",
+            account_id=f"account-{index}",
+            account_nm="자산총계",
+        )
+        for index in range(MAX_RESPONSE_ROWS + 1)
+    )
+
+    def fetch_accounts(
+        _self: DartApi,
+        query: FinancialQuery,
+    ) -> Result[tuple[FinancialAccount, ...]]:
+        del query
+        return Result.success(accounts)
+
+    monkeypatch.setattr(DartApi, "fetch_financial_accounts", fetch_accounts)
+    service = CrawlerService(
+        SecretStr("test-key"),
+        RecordingHttpClient(),
+        limits=LOCAL_QUERY_LIMITS,
+    )
+
+    # When
+    result = service.get_financial_statements("00126380", 2023, "11011", "OFS")
+
+    # Then
+    assert result.ok is True
+    assert result.data is not None
+    assert result.data.returned_row_count == MAX_RESPONSE_ROWS + 1
