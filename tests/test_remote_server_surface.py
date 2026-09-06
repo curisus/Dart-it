@@ -70,6 +70,20 @@ async def test_search_report_kind_is_optional_on_local_and_remote_surfaces() -> 
 
 
 @pytest.mark.anyio
+async def test_filing_report_kind_declares_its_supported_values() -> None:
+    """A client should not have to call the tool to learn the three values."""
+    local = {tool.name: tool for tool in await local_mcp.list_tools()}
+    remote = {tool.name: tool for tool in await create_remote_server().list_tools()}
+
+    for tool in (local["list_report_filings"], remote["list_report_filings"]):
+        assert tool.input_schema["properties"]["report_kind"]["enum"] == [
+            "audit",
+            "half_year_review",
+            "quarterly_review",
+        ]
+
+
+@pytest.mark.anyio
 async def test_get_on_the_mcp_path_is_refused_instead_of_opening_a_stream() -> None:
     response = await request("GET", MCP_PATH)
 

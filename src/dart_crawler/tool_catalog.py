@@ -13,7 +13,7 @@ which tool groups they register:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol, TypeVar
+from typing import Literal, Protocol, TypeVar
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
@@ -87,10 +87,14 @@ def _register_document_tools(mcp: MCPServer, run: ServiceRunner) -> None:
     @mcp.tool()
     def list_report_filings(
         corp_code: str,
-        report_kind: str,
+        report_kind: Literal["audit", "half_year_review", "quarterly_review"],
         ctx: Context,
     ) -> Result[tuple[Filing, ...]]:
-        """List recent five-year representative filings."""
+        """List recent five-year representative filings.
+
+        report_kind selects the report family: audit (감사보고서),
+        half_year_review (반기검토보고서), quarterly_review (분기검토보고서).
+        """
         return run(
             ctx,
             lambda service: service.list_report_filings(corp_code, report_kind),
