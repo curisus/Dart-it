@@ -129,3 +129,39 @@ def test_financial_statements_preserve_existing_failure() -> None:
     assert result.error == error
     assert result.next_action == "use OFS"
     assert len(factory.services[0].calls) == 1
+
+
+def test_financial_statements_report_amounts_as_numbers() -> None:
+    """Text amounts cannot be summed, sorted, or pivoted in a spreadsheet."""
+    source = Result.success(
+        _data((_account("현금", "1,000"), _account("매출", "2,500,000")))
+    )
+    responses = replace(
+        empty_excel_service_responses(),
+        get_financial_statements=source,
+    )
+    factory = RecordingExcelServiceFactory(responses)
+
+    result = execute_normalized_excel_query(_request(), factory)
+
+    assert result.data is not None
+    assert result.data.numeric_columns == ("thstrm_amount",)
+    assert [row["thstrm_amount"] for row in result.data.rows] == [1000, 2500000]
+
+
+def test_financial_statements_keep_identifier_columns_as_text() -> None:
+    """corp_code and rcept_no are digit strings that must not lose a leading zero."""
+    source = Result.success(_data((_account("현금", "1,000"),)))
+    responses = replace(
+        empty_excel_service_responses(),
+        get_financial_statements=source,
+    )
+    factory = RecordingExcelServiceFactory(responses)
+
+    result = execute_normalized_excel_query(_request(), factory)
+
+    assert result.data is not None
+    assert "corp_code" not in result.data.numeric_columns
+    assert "source_bsns_year" not in result.data.numeric_columns
+    assert result.data.rows[0]["corp_code"] == "00123456"
+    assert result.data.rows[0]["source_bsns_year"] == "2025"

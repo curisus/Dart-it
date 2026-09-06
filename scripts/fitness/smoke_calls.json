@@ -1,0 +1,7 @@
+[
+  {"scenario": "SMOKE", "step": "search", "tool": "search_companies", "args": {"company_query": "삼성전자", "report_kind": "audit"}, "target": "local"},
+  {"scenario": "SMOKE", "step": "fs_ofs", "tool": "get_financial_statements", "args": {"corp_code": "00126380", "bsns_year": 2025, "reprt_code": "11011", "fs_div": "OFS"}, "target": "local"},
+  {"scenario": "SMOKE", "step": "xlsx_filings", "tool": "export_query_excel", "args": {"request": {"domain": "list_report_filings", "arguments": {"corp_code": "00126380", "report_kind": "audit"}}}, "target": "local"},
+  {"scenario": "SMOKE", "step": "remote_search", "tool": "search_companies", "args": {"company_query": "삼성전자", "report_kind": "audit"}, "target": "remote"},
+  {"scenario": "SMOKE", "step": "remote_page", "tool": "load_excel_page", "args": {"request": {"domain": "list_report_filings", "arguments": {"corp_code": "00126380", "report_kind": "audit"}, "page_size": 2, "cursor": null}}, "target": "remote", "follow_cursor": true}
+]

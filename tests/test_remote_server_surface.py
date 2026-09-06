@@ -70,6 +70,30 @@ async def test_search_report_kind_is_optional_on_local_and_remote_surfaces() -> 
 
 
 @pytest.mark.anyio
+async def test_an_unknown_report_kind_arrives_as_a_result_envelope() -> None:
+    """An enum-typed parameter would make the MCP layer raise instead.
+
+    Declaring the three values in the schema reads well, but it moves the
+    rejection above this server: the caller receives a protocol error rather
+    than the envelope that carries the supported values, and every failure of
+    this server is contracted to be an envelope.
+    """
+    local = {tool.name: tool for tool in await local_mcp.list_tools()}
+    schema = local["list_report_filings"].input_schema["properties"]["report_kind"]
+
+    assert "enum" not in schema
+
+    envelope = await call_tool_envelope(
+        "list_report_filings",
+        {"corp_code": "00126380", "report_kind": "review"},
+    )
+
+    assert envelope["ok"] is False
+    error = json_object(envelope["error"])
+    assert error["code"] == "CONFIG_ERROR"
+
+
+@pytest.mark.anyio
 async def test_get_on_the_mcp_path_is_refused_instead_of_opening_a_stream() -> None:
     response = await request("GET", MCP_PATH)
 

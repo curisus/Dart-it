@@ -20,8 +20,18 @@ from dart_crawler.domains.query_guards import (
 from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
 from dart_crawler.result import ErrorCode, Result, error_info
 
+# OpenDART answers "no data" with one status for every reason, so a missing
+# consolidated statement and a wrong year or report code arrive identically.
+# The wording therefore offers the retry without asserting the cause: the
+# 2026-09-06 campaign followed the old text, retried with OFS, and hit the
+# same NOT_FOUND because the year simply had no statements at all.
 _CFS_NOT_FOUND_NEXT_ACTION: Final = (
-    '연결재무제표가 없는 회사일 수 있습니다. fs_div="OFS"(별도)로 다시 시도하세요.'
+    '연결재무제표가 없는 회사라면 fs_div="OFS"(별도)로, '
+    "그래도 없으면 다른 bsns_year 또는 reprt_code로 확인하세요."
+)
+_OFS_NOT_FOUND_NEXT_ACTION: Final = (
+    "다른 bsns_year 또는 reprt_code로 확인하세요. "
+    "해당 사업연도의 재무제표가 OpenDART에 없을 수 있습니다."
 )
 _SPLIT_COMPANIES_NEXT_ACTION: Final = "회사를 나누어 호출하세요."
 
@@ -79,7 +89,14 @@ class MajorAccountData(BaseModel):
 
 
 class FinancialIndicatorData(BaseModel):
-    """DS003 financial-index rows for one or more companies."""
+    """DS003 financial-index rows for one or more companies.
+
+    ``empty_indicator_count`` counts the rows OpenDART returned with no value.
+    This fetch is all-or-nothing, so a blank idx_val is never a collection
+    failure: OpenDART publishes no value for that indicator and that company.
+    Several indicators are blank for every filer, which is why the count is a
+    fact about the answer rather than a warning about it.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -88,6 +105,7 @@ class FinancialIndicatorData(BaseModel):
     reprt_code: str
     idx_cl_code: str
     returned_row_count: int
+    empty_indicator_count: int
     indicators: tuple[FinancialIndexRow, ...]
 
 
@@ -129,14 +147,17 @@ class FinancialsService:
         fetched = self._source.fetch_financial_accounts(query)
         if not fetched.ok or fetched.data is None:
             if (
-                fs_div == "CFS"
-                and fetched.error is not None
+                fetched.error is not None
                 and fetched.error.code is ErrorCode.NOT_FOUND
             ):
                 return Result.failure(
                     fetched.error,
                     warnings=fetched.warnings,
-                    next_action=_CFS_NOT_FOUND_NEXT_ACTION,
+                    next_action=(
+                        _CFS_NOT_FOUND_NEXT_ACTION
+                        if fs_div == "CFS"
+                        else _OFS_NOT_FOUND_NEXT_ACTION
+                    ),
                 )
             return Result.failure(
                 fetched.error
@@ -274,7 +295,11 @@ class FinancialsService:
                 reprt_code=reprt_code,
                 idx_cl_code=idx_cl_code,
                 returned_row_count=len(fetched.data),
+                empty_indicator_count=sum(
+                    1 for row in fetched.data if not row.idx_val.strip()
+                ),
                 indicators=fetched.data,
             ),
             warnings=fetched.warnings,
         )
+

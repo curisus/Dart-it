@@ -234,9 +234,9 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 | 구분 | 도구 | 주요 입력 | 하는 일과 기준 |
 | --- | --- | --- | --- |
 | 회사·공시 | `search_companies` | `company_query`, 선택적 `report_kind` | `report_kind`를 생략하거나 `null`로 두면 OpenDART 회사코드 전체에서 최대 5개를 순위화합니다(시장구분은 `null`). 지정하면 `audit`, `quarterly_review`, `half_year_review` 공시가 있는 회사만 찾습니다. |
-| 회사·공시 | `list_report_filings` | `corp_code`, `report_kind` | 최근 5개 사업연도의 대표 공시를 반환합니다. 정정 계열은 묶고 철회된 공시는 제외합니다. |
+| 회사·공시 | `list_report_filings` | `corp_code`, `report_kind`(`audit`·`half_year_review`·`quarterly_review`) | 최근 5개 사업연도의 대표 공시를 반환합니다. 정정 계열은 묶고 철회된 공시는 제외합니다. |
 | 회사·공시 | `list_report_attachments` | `rcept_no` | 선택 가능한 별도·연결 첨부를 반환합니다. 식별자는 `opendart:접수번호:파일명` 또는 `viewer:접수번호:dcmNo` 형식입니다. |
-| 첨부 원문 | `list_report_sections` | `rcept_no`, `attachment_id` | 첨부문서의 목차를 내용 없이 반환합니다. 각 항목에는 `section_id`, 제목, 종류, 블록·표·셀·텍스트 수, 이미지 포함 여부가 들어갑니다. |
+| 첨부 원문 | `list_report_sections` | `rcept_no`, `attachment_id` | 첨부문서의 목차를 내용 없이 반환합니다. 각 항목에는 `section_id`, 제목, `heading`, 종류, 블록·표·셀·텍스트 수, 이미지 포함 여부가 들어갑니다. 주석 제목은 워크시트 이름 길이 제한 때문에 `주석 N`으로 정규화되며, `heading`이 원문 제목(`28. 재무위험관리`)을 보존하므로 주석 전량을 받지 않고 목차만으로 필요한 주석을 고를 수 있습니다. 다른 구역의 `heading`은 `null`입니다. |
 | 첨부 원문 | `get_report_sections` | `rcept_no`, `attachment_id`, `section_ids`, `section_kinds` | 선택한 구역의 문단과 표를 원문 순서로 반환합니다. 식별자 또는 종류 중 하나 이상이 필요하고, 둘 다 주면 합집합을 반환합니다. `statements`는 핵심 재무제표 4종을 뜻합니다. |
 | 공식 재무정보 | `get_financial_statements` | `corp_code`, `bsns_year`, `reprt_code`, `fs_div` | 한 회사·한 기간의 공식 계정과목 전체를 반환합니다. `fs_div`는 기본 `CFS`(연결) 또는 `OFS`(별도)입니다. 금액은 OpenDART 원문 문자열로 유지합니다. |
 | 공식 재무정보 | `get_major_accounts` | `corp_codes`, `bsns_year`, `reprt_code` | 최대 100개 회사의 주요 재무상태표·손익계산서 계정을 한 번에 반환합니다. |
@@ -244,7 +244,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 | 정기보고서 | `get_report_topics` | `corp_code`, `bsns_year`, `reprt_code`, `topics` | 감사인, 배당, 주주, 임직원, 보수, 채무증권, 자금 사용 등 등록된 주요정보 28종을 한 요청에서 모두 선택할 수 있습니다. |
 | 기업정보 | `get_company_profile` | `corp_code` | 회사명, 대표자, 시장구분, 등록번호, 주소, 홈페이지·IR 주소, 연락처, 업종, 설립일, 결산월을 반환합니다. |
 | 지분공시 | `get_ownership_reports` | `corp_code`, `report_type`, `bgn_de`, `end_de` | 5% 대량보유 또는 임원·주요주주 소유보고를 반환합니다. 시작일과 종료일은 선택이며 한쪽만 지정할 수도 있습니다. |
-| 주요사항보고 | `get_material_events` | `corp_code`, `event_types`, `bgn_de`, `end_de` | 등록된 주요사항보고 36종을 한 요청에서 모두 선택할 수 있습니다. 접수 시작일·종료일은 모두 필수입니다. |
+| 주요사항보고 | `get_material_events` | `corp_code`, `event_types`, `bgn_de`, `end_de` | 등록된 주요사항보고 36종을 한 요청에서 모두 선택할 수 있습니다. 접수 시작일·종료일은 모두 필수입니다. 행에는 접수일자 필드가 없습니다 — 접수일은 `rcept_no`의 앞 8자리입니다(`20260310002820` → 2026-03-10). |
 | 증권신고서 | `get_registration_statements` | `corp_code`, `stmt_type`, `bgn_de`, `end_de` | 증권신고서 주요정보 6종 중 한 종류를 공식 그룹 제목별로 반환합니다. 접수 시작일·종료일은 모두 필수입니다. |
 
 `corp_code`는 `search_companies`에서 확인하는 8자리 DART 고유번호이며 6자리 종목코드와 다릅니다. `bgn_de`와 `end_de`는 `YYYYMMDD` 형식입니다. `section_kinds`는 `opinion`, `balance_sheet`, `income`, `equity`, `cash_flow`, `note`, `other`와 핵심 재무제표 4종을 한 번에 고르는 `statements`를 지원합니다.
@@ -263,7 +263,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 | --- | --- | --- |
 | `export_report_excel` | `rcept_no`, `attachment_id` | 선택한 첨부를 검색·계산 가능한 `.xlsx`로 생성합니다. `수집정보` 시트와 원문 순서의 구역별 시트를 만들고, 저장 후 원문 셀·병합 범위와 다시 대조합니다. 재무상태표, 손익·포괄손익, 자본변동표, 현금흐름표 중 누락이 있으면 파일을 만들지 않습니다. |
 | `export_report_markdown` | `rcept_no`, `attachment_id` | 선택한 첨부의 의견·재무제표·주석·기타 구역을 원문 순서의 `.md` 파일 하나로 생성합니다. 핵심 재무제표가 빠져도 있는 내용을 생성하고 `missing_sections`와 `collection_status`로 알립니다. |
-| `export_query_excel` | `domain`, `arguments` | 13개 조회 영역 중 하나의 전체 정규화 결과를 `.xlsx`로 생성합니다. 사용자가 경로나 파일명을 지정하지 않으며, `DART_MCP_OUTPUT_DIR` 또는 프로젝트의 `output` 폴더에 `<domain>.xlsx`, `<domain>_2.xlsx` 순서로 저장합니다. |
+| `export_query_excel` | `domain`, `arguments` | 13개 조회 영역 중 하나의 전체 정규화 결과를 `.xlsx`로 생성합니다. 사용자가 경로나 파일명을 지정하지 않으며, `DART_MCP_OUTPUT_DIR` 또는 프로젝트의 `output` 폴더에 저장합니다. 파일명은 `<domain>`에 요청 인자를 이어 붙여 만들고(`get_financial_statements_00126380_2025_11011_CFS.xlsx`) 이름이 겹치면 `_2`, `_3`을 붙입니다. `metadata` 시트에는 요청 인자가 `argument.<이름>` 행으로 기록됩니다. |
 
 기존 첨부 파일 생성 도구 2개는 접수번호, 첨부 식별자, 원문 SHA-256 값이 같은 기존 파일을 재사용합니다. SHA-256은 같은 원문인지 확인하기 위한 고정 길이 식별값입니다. 이미지 전용 내용은 OCR하지 않고 자리표시자로 남기며, 이 경우 `partial` 상태와 경고가 반환될 수 있습니다.
 
@@ -295,10 +295,16 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
     "code": "INVALID_INPUT",
     "message": "report_kind가 지원 범위에 없습니다.",
     "retryable": false,
-    "details": {}
+    "details": {
+      "supported_report_kinds": [
+        {"key": "audit", "label": "감사보고서"},
+        {"key": "half_year_review", "label": "반기검토보고서"},
+        {"key": "quarterly_review", "label": "분기검토보고서"}
+      ]
+    }
   },
   "warnings": [],
-  "next_action": null
+  "next_action": "report_kind에는 audit, half_year_review, quarterly_review 중 하나를 입력하세요."
 }
 ```
 
@@ -320,6 +326,16 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 경고 코드:
 
 `PARTIAL_COLLECTION`, `IMAGE_CONTENT_SKIPPED`, `AMOUNT_MISMATCH`, `COMPARISON_UNAVAILABLE`, `FALLBACK_SOURCE_USED`, `ORIGINAL_FILING_SOURCE_USED`, `VIEWER_DISCOVERY_SKIPPED`, `EXISTING_FILE_REUSED`
+
+`FALLBACK_SOURCE_USED`는 서로 다른 세 가지 대체를 한 코드로 알리므로, `details.fallback_axis`로 어느 것인지 구분합니다.
+
+| `fallback_axis` | 뜻 |
+| --- | --- |
+| `source` | OpenDART 원문 ZIP을 쓸 수 없어 DART 웹 문서에서 읽었습니다. 내용의 출처가 바뀌는 유일한 경우입니다. |
+| `parser` | 첨부가 엄격한 XML로 해석되지 않아 HTML 호환 파서를 썼습니다. OpenDART 첨부 대부분이 이 경로이므로 일상적인 알림입니다. |
+| `filename_date` | 본문에서 작성일을 찾지 못해 접수일자를 파일명에 썼습니다. 내용에는 영향이 없습니다. |
+
+`CORE_STATEMENT_MISSING`은 `export_report_excel`이 재무상태표·손익·자본변동표·현금흐름표 중 하나라도 없는 첨부를 받았을 때 파일을 만들지 않고 반환합니다. 다만 이 오류는 실제 공시에서 관측된 적이 없습니다 — 2026-09-06 검증(5개사·공시 15건)에서 0건이고, `list_report_attachments`가 노출하는 첨부는 별도·연결 감사보고서뿐이라 결측 첨부를 인자로 지정할 방법이 없었습니다. 따라서 이 경로의 동작은 사실상 단위 테스트로만 보증됩니다.
 
 </details>
 
@@ -378,7 +394,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 
 ### 로컬 조회 결과 XLSX 제한
 
-`export_query_excel`은 데이터 시트마다 헤더 1행과 데이터 최대 1,048,575행을 저장하고, 열은 최대 16,384개까지 허용합니다. 긴 문자열은 Excel 한계에 맞춰 32,767자로 자릅니다. 큰 정수와 실수는 Excel 저장 방식 때문에 원격 JSON과 정밀도나 다시 열린 타입이 달라질 수 있습니다. `=`, `+`, `-`, `@`로 시작하는 문자열도 수식으로 실행되지 않도록 문자열 셀로 저장합니다. 상세한 정밀도·빈 문자열·음수 0 처리 기준은 [대용량 Excel 데이터 전달 계약](docs/unlimited_excel_delivery.md)에 정리되어 있습니다.
+`export_query_excel`은 데이터 시트마다 헤더 1행과 데이터 최대 1,048,575행을 저장하고, 열은 최대 16,384개까지 허용합니다. 긴 문자열은 Excel 한계에 맞춰 32,767자로 자릅니다. 금액·지표 필드(`thstrm_amount` 계열, `idx_val`)는 열 전체가 숫자로 읽힐 때 숫자 셀 + `#,##0` 계열 서식으로 저장되어 SUM·정렬·피벗이 바로 동작합니다. `corp_code`·`rcept_no` 같은 식별자는 숫자만으로 이루어져 있어도 앞자리 0이 사라지지 않도록 문자열로 남습니다. 큰 정수와 실수는 Excel 저장 방식 때문에 원격 JSON과 정밀도나 다시 열린 타입이 달라질 수 있습니다. `=`, `+`, `-`, `@`로 시작하는 문자열도 수식으로 실행되지 않도록 문자열 셀로 저장합니다. 상세한 정밀도·빈 문자열·음수 0 처리 기준은 [대용량 Excel 데이터 전달 계약](docs/unlimited_excel_delivery.md)에 정리되어 있습니다.
 
 ### 지원 값 상세
 

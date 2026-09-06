@@ -6,8 +6,10 @@ from typing import Final, Protocol
 
 from dart_crawler.excel_canonical_json import canonical_json_text
 from dart_crawler.excel_json_models import model_json_object
+from dart_crawler.excel_numeric_columns import numeric_column_formats
 from dart_crawler.excel_page_models import ExcelScalar
 from dart_crawler.normalized_excel_models import NormalizedExcelDataset
+from dart_crawler.result import JsonValue
 
 EXCEL_DATA_ROWS_PER_SHEET: Final = 1_048_575
 EXCEL_MAX_COLUMNS: Final = 16_384
@@ -36,6 +38,11 @@ class ExcelWorkbookPlan:
     data_sheet_names: tuple[str, ...]
     generated_at_utc: str
     options: ExcelWorkbookOptions
+    # One display format per data column, aligned with dataset.columns and
+    # computed once: writing applies it and validation re-reads it, each per
+    # sheet and validation twice per file, so deriving it here keeps a workbook
+    # from being scanned four times for an answer that cannot change.
+    column_number_formats: tuple[str | None, ...] = ()
 
     @property
     def sheet_names(self) -> tuple[str, ...]:
@@ -60,11 +67,15 @@ def build_excel_workbook_plan(
     if instant.tzinfo is None:
         instant = instant.replace(tzinfo=UTC)
     generated = instant.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    formats = numeric_column_formats(dataset.numeric_columns, dataset.rows)
     return ExcelWorkbookPlan(
         dataset=dataset,
         data_sheet_names=data_sheet_names,
         generated_at_utc=generated,
         options=options,
+        column_number_formats=tuple(
+            formats.get(column) for column in dataset.columns
+        ),
     )
 
 
@@ -74,6 +85,12 @@ def metadata_rows(plan: ExcelWorkbookPlan) -> tuple[WorkbookRow, ...]:
         ("key", "value"),
         ("schema_version", dataset.schema_version),
         ("domain", dataset.domain.value),
+        # One row per request argument, so the sheet answers "which year, which
+        # company, consolidated or separate" without decoding a fingerprint.
+        *(
+            (f"argument.{name}", _argument_value(value))
+            for name, value in dataset.validated_arguments.items()
+        ),
         ("request_fingerprint", dataset.request_fingerprint),
         ("source_fingerprint", dataset.source_fingerprint),
         ("dataset_id", dataset.dataset_id),
@@ -82,6 +99,12 @@ def metadata_rows(plan: ExcelWorkbookPlan) -> tuple[WorkbookRow, ...]:
         ("provenance", canonical_json_text(model_json_object(dataset.provenance))),
         ("data_sheet_names", canonical_json_text(list(plan.data_sheet_names))),
     )
+
+
+def _argument_value(value: JsonValue) -> ExcelScalar:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return canonical_json_text(value)
 
 
 def warning_rows(plan: ExcelWorkbookPlan) -> tuple[WorkbookRow, ...]:

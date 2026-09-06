@@ -16,7 +16,10 @@ from dart_crawler.company_name_matching import (
     _rank_company,
 )
 from dart_crawler.domain import Company, Market, MatchConfidence, ReportKind
-from dart_crawler.filing_service import matches_report_kind
+from dart_crawler.filing_service import (
+    matches_report_kind,
+    validate_report_kind,
+)
 from dart_crawler.result import ErrorCode, Result, error_info
 from dart_crawler.zip_safety import ArchiveLimits, read_member
 
@@ -68,17 +71,15 @@ class CompanySearchService:
         report_kind: ReportKind | str | None,
     ) -> Result[tuple[Company, ...]]:
         """Return up to five ranked companies, optionally filtered by filings."""
-        try:
-            parsed_kind = None if report_kind is None else ReportKind(report_kind)
-        except ValueError:
+        violation = (
+            None if report_kind is None else validate_report_kind(report_kind)
+        )
+        if violation is not None:
             return Result.failure(
-                error_info(
-                    ErrorCode.INVALID_INPUT,
-                    "report_kind가 지원 범위에 없습니다.",
-                    retryable=False,
-                ),
-                next_action="audit, quarterly_review, half_year_review 중 하나를 입력하세요.",
+                violation.error,
+                next_action=violation.next_action,
             )
+        parsed_kind = None if report_kind is None else ReportKind(report_kind)
         query_readings = _query_readings(query)
         if not query_readings.normalized:
             return Result.failure(

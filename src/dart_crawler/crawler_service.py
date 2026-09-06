@@ -39,7 +39,8 @@ from dart_crawler.domains.registration_statements import (
 )
 from dart_crawler.domains.report_topics import ReportTopicData, ReportTopicService
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
-from dart_crawler.filing_service import FilingService
+from dart_crawler.fallback_axis import FALLBACK_AXIS_KEY, FallbackAxis
+from dart_crawler.filing_service import FilingService, validate_report_kind
 from dart_crawler.http_client import HttpClient
 from dart_crawler.markdown_export import MarkdownExportedFile, MarkdownExportService
 from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
@@ -59,9 +60,39 @@ from dart_crawler.section_models import (
     returned_text_char_count,
     select_sections,
     summarize_sections,
+    validate_section_selectors,
 )
 
 PARSER_VERSION: Final = "0.1.0"
+# The four discovery tools are used in one fixed order, and each answer holds
+# the argument the next call needs. Saying so removes a round trip a caller
+# would otherwise spend assembling that argument from the response body.
+_SELECT_FILING_NEXT_ACTION: Final = (
+    "찾은 corp_code로 list_report_filings(corp_code, report_kind)를 호출하세요."
+)
+_SELECT_ATTACHMENT_NEXT_ACTION: Final = (
+    "원하는 공시의 rcept_no로 list_report_attachments(rcept_no)를 호출하세요."
+)
+_LIST_SECTIONS_NEXT_ACTION: Final = (
+    "별도·연결 중 하나의 attachment_id로 "
+    "list_report_sections(rcept_no, attachment_id)를 호출하세요."
+)
+# The remote surface has no export tools, and both surfaces share this text,
+# so it names only what a caller of either one can actually call next.
+_GET_SECTIONS_NEXT_ACTION: Final = (
+    "목차에서 고른 section_ids 또는 section_kinds로 get_report_sections를 호출하세요."
+)
+
+
+def _with_next_action[T](result: Result[T], next_action: str) -> Result[T]:
+    """Point a successful envelope at the next step of the pipeline."""
+    if not result.ok or result.data is None or result.next_action is not None:
+        return result
+    return Result.success(
+        result.data,
+        warnings=result.warnings,
+        next_action=next_action,
+    )
 
 T = TypeVar("T")
 
@@ -97,7 +128,10 @@ class CrawlerService:
         report_kind: ReportKind | str | None,
     ) -> Result[tuple[Company, ...]]:
         """Search companies, optionally requiring a report family."""
-        return CompanySearchService(self._api).search(company_query, report_kind)
+        return _with_next_action(
+            CompanySearchService(self._api).search(company_query, report_kind),
+            _SELECT_FILING_NEXT_ACTION,
+        )
 
     def get_financial_statements(
         self,
@@ -192,6 +226,12 @@ class CrawlerService:
         report_kind: ReportKind | str,
     ) -> Result[tuple[Filing, ...]]:
         """List recent representative filings for one company code."""
+        violation = validate_report_kind(report_kind)
+        if violation is not None:
+            return Result.failure(
+                violation.error,
+                next_action=violation.next_action,
+            )
         company = self.search_companies(corp_code, report_kind)
         if not company.ok or not company.data:
             return Result.failure(
@@ -201,15 +241,21 @@ class CrawlerService:
                 warnings=company.warnings,
                 next_action="회사코드와 보고서 종류를 확인하세요.",
             )
-        return FilingService(self._api).list(
-            corp_code,
-            company.data[0].company_name,
-            report_kind,
+        return _with_next_action(
+            FilingService(self._api).list(
+                corp_code,
+                company.data[0].company_name,
+                report_kind,
+            ),
+            _SELECT_ATTACHMENT_NEXT_ACTION,
         )
 
     def list_report_attachments(self, rcept_no: str) -> Result[tuple[Attachment, ...]]:
         """List selectable report attachments for one receipt number."""
-        return AttachmentService(self._api).list(rcept_no)
+        return _with_next_action(
+            AttachmentService(self._api).list(rcept_no),
+            _LIST_SECTIONS_NEXT_ACTION,
+        )
 
     def export_report_excel(
         self,
@@ -304,6 +350,9 @@ class CrawlerService:
                 WarningInfo(
                     code=WarningCode.FALLBACK_SOURCE_USED,
                     message="본문 작성일을 찾지 못해 접수일자를 파일명에 사용했습니다.",
+                    details={
+                        FALLBACK_AXIS_KEY: FallbackAxis.FILENAME_DATE.value
+                    },
                 ),
             )
         correction_chain = _correction_chain(self._api, disclosure.data)
@@ -360,6 +409,7 @@ class CrawlerService:
                 sections=summaries,
             ),
             warnings=loaded.warnings + _core_statement_warnings(document),
+            next_action=_GET_SECTIONS_NEXT_ACTION,
         )
 
     def get_report_sections(
@@ -370,6 +420,12 @@ class CrawlerService:
         section_kinds: tuple[str, ...] = (),
     ) -> Result[ReportSectionData]:
         """Return every block of the sections named by identifier or by kind."""
+        violation = validate_section_selectors(section_ids, section_kinds)
+        if violation is not None:
+            return Result.failure(
+                violation.error,
+                next_action=violation.next_action,
+            )
         loaded = self._validated_document(rcept_no, attachment_id)
         if not loaded.ok or loaded.data is None:
             return Result.failure(

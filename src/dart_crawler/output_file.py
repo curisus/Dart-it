@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
-import re
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openpyxl import load_workbook
 
+from dart_crawler.filename_safety import safe_filename as safe_filename  # noqa: PLC0414
 from dart_crawler.workbook_metadata import (
     ATTACHMENT_ID_KEY,
     RCEPT_NO_KEY,
@@ -17,14 +16,6 @@ from dart_crawler.workbook_validation import METADATA_SHEET
 
 if TYPE_CHECKING:
     from dart_crawler.excel_export import ExportContext
-
-
-def safe_filename(filename: str) -> str:
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename).rstrip(" .")
-    stem, suffix = os.path.splitext(cleaned)
-    if stem.upper() in {"CON", "PRN", "AUX", "NUL"}:
-        stem = "_" + stem
-    return stem[:220] + suffix
 
 
 def next_available_path(path: Path, context: ExportContext) -> Path:

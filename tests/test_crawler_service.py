@@ -11,6 +11,12 @@ from dart_crawler.domain import Attachment
 from dart_crawler.http_client import HttpResponse
 from dart_crawler.query_limits import LOCAL_QUERY_LIMITS, MAX_RESPONSE_ROWS
 from dart_crawler.result import ErrorCode, Result, WarningCode, WarningInfo
+from tests.report_section_test_support import (
+    ATTACHMENT_ID,
+    RCEPT_NO,
+    report_xml,
+    service_reading,
+)
 
 _RCEPT_NO = "20260515001658"
 _SOURCE_RCEPT_NO = "20260312001119"
@@ -222,3 +228,19 @@ def test_local_query_limits_reach_financial_domain_service(
     assert result.ok is True
     assert result.data is not None
     assert result.data.returned_row_count == MAX_RESPONSE_ROWS + 1
+
+
+def test_each_discovery_step_points_at_the_next_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The four tools run in one order and each answer holds the next argument."""
+    service = service_reading(monkeypatch, report_xml())
+
+    listing = service.list_report_sections(RCEPT_NO, ATTACHMENT_ID)
+
+    assert listing.ok is True
+    assert listing.next_action is not None
+    assert "get_report_sections" in listing.next_action
+    # The remote surface registers no export tool, and both surfaces share this
+    # text, so it must never name one.
+    assert "export_report_excel" not in listing.next_action

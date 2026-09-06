@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import dart_crawler.excel_query_workbook_writer as workbook_writer
+from dart_crawler.excel_dataset_filename import dataset_filename
 from dart_crawler.excel_export_result import (
     ExcelCleanupWarningCode,
     ExcelExportWarningInfo,
@@ -60,11 +61,7 @@ def publish_excel_dataset(
     plan = build_excel_workbook_plan(dataset, clock, options)
     suffix = 1
     while True:
-        filename = (
-            f"{dataset.domain.value}.xlsx"
-            if suffix == 1
-            else f"{dataset.domain.value}_{suffix}.xlsx"
-        )
+        filename = dataset_filename(dataset, suffix)
         final_path = root_outcome.path / filename
         lock_path = final_path.with_suffix(final_path.suffix + ".lock")
         if not _candidate_is_safe(root_outcome, final_path, lock_path):

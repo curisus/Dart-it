@@ -38,6 +38,21 @@ from dart_crawler.result import (
 )
 
 _SPLIT_TOPICS_NEXT_ACTION: Final = "topic을 나누어 호출하세요."
+# Fields OpenDART echoes on every row, "해당 없음" rows included, so a row made
+# only of these says nothing about the topic that was asked for.
+_IDENTITY_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "corp_code",
+        "corp_cls",
+        "corp_name",
+        "stock_code",
+        "rcept_no",
+        "stlm_dt",
+        "bsns_year",
+        "reprt_code",
+    }
+)
+_PLACEHOLDER: Final = "-"
 
 # One DS002 key-information topic: an endpoint behind a stable name. Kept as
 # an alias (rather than its own dataclass) now that domains/registry.py owns
@@ -181,13 +196,21 @@ class ReportTopicSource(Protocol):
 
 
 class ReportTopicRows(BaseModel):
-    """One topic's rows, returned verbatim from the source endpoint."""
+    """One topic's rows, returned verbatim from the source endpoint.
+
+    ``row_count`` counts what OpenDART sent. ``substantive_row_count`` counts
+    the rows that actually say something: "해당 없음" arrives as one row whose
+    every field outside the identifiers is "-", and counting that as data hid
+    the empty-topic answers this service is supposed to give.
+
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     topic: str
     label: str
     row_count: int
+    substantive_row_count: int
     rows: tuple[JsonObject, ...]
 
 
@@ -268,15 +291,17 @@ class ReportTopicService:
                 # count as an empty topic or the all-empty NOT_FOUND and
                 # partial-collection warnings are silently bypassed.
                 rows = fetched.data
+            substantive_row_count = sum(1 for row in rows if _is_substantive(row))
             collected.append(
                 ReportTopicRows(
                     topic=topic.key,
                     label=topic.label,
                     row_count=len(rows),
+                    substantive_row_count=substantive_row_count,
                     rows=rows,
                 )
             )
-            if not rows:
+            if substantive_row_count == 0:
                 empty_topics.append(topic.key)
 
         if empty_topics and len(empty_topics) == len(topics):
@@ -402,6 +427,24 @@ def _duplicates(values: tuple[str, ...]) -> tuple[str, ...]:
             duplicates.append(value)
         seen.add(value)
     return tuple(duplicates)
+
+
+def _is_substantive(row: JsonObject) -> bool:
+    """Whether a row says anything beyond identifying the company and filing."""
+    return any(
+        _carries_content(value)
+        for name, value in row.items()
+        if name not in _IDENTITY_FIELDS
+    )
+
+
+def _carries_content(value: JsonValue) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        stripped = value.strip()
+        return bool(stripped) and stripped != _PLACEHOLDER
+    return True
 
 
 def _total_text_char_count(topics: list[ReportTopicRows]) -> int:

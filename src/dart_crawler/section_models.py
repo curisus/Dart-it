@@ -14,6 +14,7 @@ from dart_crawler.document_model import (
     ParsedDocument,
     SectionKind,
 )
+from dart_crawler.domains.query_guards import GuardViolation
 from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
 from dart_crawler.result import ErrorCode, JsonObject, Result, error_info
 from dart_crawler.statement_lexicon import statement_kinds
@@ -67,12 +68,18 @@ class SectionSummary(BaseModel):
     everything else: it is the character count of the text carried by the
     headings, paragraphs, and images, and deliberately excludes table cells so
     that the two numbers never charge the same content twice.
+
+    ``heading`` is the source line a normalized title was derived from. Note
+    titles collapse to "주석 N" because a worksheet name may not exceed 31
+    characters, so the heading is what lets a caller pick one note instead of
+    requesting every note to search them.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     section_id: str
     title: str
+    heading: str | None = None
     kind: SectionKind
     block_count: int
     table_count: int
@@ -140,6 +147,7 @@ def summarize_sections(document: ParsedDocument) -> tuple[SectionSummary, ...]:
         SectionSummary(
             section_id=section_id(index, section.kind),
             title=section.title,
+            heading=section.heading,
             kind=section.kind,
             block_count=len(section.blocks),
             table_count=sum(
@@ -175,6 +183,61 @@ def returned_text_char_count(sections: tuple[SectionData, ...]) -> int:
     )
 
 
+def validate_section_selectors(
+    section_ids: tuple[str, ...],
+    section_kinds: tuple[str, ...],
+) -> GuardViolation | None:
+    """Reject selector syntax that no attachment could ever satisfy.
+
+    These three checks read the request alone, so callers run them before
+    downloading an attachment: a mistyped kind otherwise costs one OpenDART
+    download, and its failure envelope would carry the collection warnings
+    raised on the way to a document the caller never gets to see.
+    """
+    if not section_ids and not section_kinds:
+        return GuardViolation(
+            error_info(
+                ErrorCode.INVALID_INPUT,
+                "section_ids 또는 section_kinds 중 하나 이상을 지정해야 합니다.",
+                retryable=False,
+            ),
+            next_action=(
+                "list_report_sections가 돌려준 section_id를 고르거나 "
+                "section_kinds에 statements를 지정하세요."
+            ),
+        )
+    malformed = tuple(value for value in section_ids if not _is_section_id(value))
+    if malformed:
+        malformed_details: JsonObject = {"invalid_section_ids": list(malformed)}
+        return GuardViolation(
+            error_info(
+                ErrorCode.INVALID_INPUT,
+                "section_id 형식이 올바르지 않습니다.",
+                retryable=False,
+                details=malformed_details,
+            ),
+            next_action=_RETRY_LISTING_NEXT_ACTION,
+        )
+    unknown = tuple(
+        value for value in section_kinds if value not in _SUPPORTED_KIND_VALUES
+    )
+    if unknown:
+        unknown_details: JsonObject = {
+            "unknown_section_kinds": list(unknown),
+            "supported_section_kinds": list(_SUPPORTED_KIND_VALUES),
+        }
+        return GuardViolation(
+            error_info(
+                ErrorCode.INVALID_INPUT,
+                "지원하지 않는 section_kinds 값입니다.",
+                retryable=False,
+                details=unknown_details,
+            ),
+            next_action="section_kinds에는 statements 별칭이나 목차의 kind 값을 지정하세요.",
+        )
+    return None
+
+
 def select_sections(
     document: ParsedDocument,
     section_ids: tuple[str, ...],
@@ -183,33 +246,11 @@ def select_sections(
     limits: QueryLimits = DEFAULT_QUERY_LIMITS,
 ) -> Result[tuple[SectionData, ...]]:
     """Return the union of the sections named by identifier and by kind."""
-    if not section_ids and not section_kinds:
-        return _invalid_input(
-            "section_ids 또는 section_kinds 중 하나 이상을 지정해야 합니다.",
-            next_action=(
-                "list_report_sections가 돌려준 section_id를 고르거나 "
-                "section_kinds에 statements를 지정하세요."
-            ),
-        )
-    malformed = tuple(value for value in section_ids if not _is_section_id(value))
-    if malformed:
-        return _invalid_input(
-            "section_id 형식이 올바르지 않습니다.",
-            details={"invalid_section_ids": list(malformed)},
-            next_action=_RETRY_LISTING_NEXT_ACTION,
-        )
-    unknown = tuple(
-        value for value in section_kinds if value not in _SUPPORTED_KIND_VALUES
-    )
-    if unknown:
-        return _invalid_input(
-            "지원하지 않는 section_kinds 값입니다.",
-            details={
-                "unknown_section_kinds": list(unknown),
-                "supported_section_kinds": list(_SUPPORTED_KIND_VALUES),
-            },
-            next_action="section_kinds에는 statements 별칭이나 목차의 kind 값을 지정하세요.",
-        )
+    # Callers that hold a document reach the same rejection here; running the
+    # guard twice keeps this function correct on its own.
+    violation = validate_section_selectors(section_ids, section_kinds)
+    if violation is not None:
+        return Result.failure(violation.error, next_action=violation.next_action)
     wanted_ids = frozenset(section_ids)
     wanted_kinds = _expand_kinds(section_kinds)
     selected = tuple(

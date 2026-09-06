@@ -625,3 +625,90 @@ def test_get_mixed_empty_success_and_not_found_warns_about_both() -> None:
         "audit_service_contract",
         "non_audit_service_contract",
     ]
+
+
+# --- U-04: placeholder rows count as an empty topic --------------------------
+
+
+def _placeholder_row() -> JsonObject:
+    """OpenDART answers "해당 없음" with one row whose values are all "-"."""
+    return {
+        "corp_code": _CORP_CODE,
+        "corp_name": "삼성전자",
+        "rcept_no": "20260310002820",
+        "stlm_dt": "2025-12-31",
+        "se": "-",
+        "cnt": "-",
+        "amount": "-",
+    }
+
+
+def test_a_placeholder_only_topic_is_reported_as_empty() -> None:
+    source = RecordingReportTopicSource(
+        results={
+            _AUDIT_OPINION_ENDPOINT: Result.success((_placeholder_row(),)),
+        }
+    )
+    service = ReportTopicService(source)
+
+    result = service.get(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, ("audit_opinion",))
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert result.error.details["empty_topics"] == ["audit_opinion"]
+
+
+def test_a_placeholder_only_topic_beside_a_real_one_warns() -> None:
+    source = RecordingReportTopicSource(
+        results={
+            _AUDIT_OPINION_ENDPOINT: Result.success((_topic_row(),)),
+            _AUDIT_SERVICE_ENDPOINT: Result.success((_placeholder_row(),)),
+        }
+    )
+    service = ReportTopicService(source)
+
+    result = service.get(
+        _CORP_CODE,
+        _BSNS_YEAR,
+        _REPRT_CODE,
+        ("audit_opinion", "audit_service_contract"),
+    )
+
+    assert result.ok is True
+    assert result.data is not None
+    assert [warning.code for warning in result.warnings] == [
+        WarningCode.PARTIAL_COLLECTION
+    ]
+    assert result.warnings[0].details["empty_topics"] == ["audit_service_contract"]
+    counts = {
+        item.topic: (item.row_count, item.substantive_row_count)
+        for item in result.data.topics
+    }
+    assert counts == {
+        "audit_opinion": (1, 1),
+        "audit_service_contract": (1, 0),
+    }
+
+
+def test_the_source_row_is_still_returned_verbatim() -> None:
+    """The placeholder row is data OpenDART sent; only the count judges it."""
+    placeholder = _placeholder_row()
+    source = RecordingReportTopicSource(
+        results={
+            _AUDIT_OPINION_ENDPOINT: Result.success((_topic_row(),)),
+            _AUDIT_SERVICE_ENDPOINT: Result.success((placeholder,)),
+        }
+    )
+    service = ReportTopicService(source)
+
+    result = service.get(
+        _CORP_CODE,
+        _BSNS_YEAR,
+        _REPRT_CODE,
+        ("audit_opinion", "audit_service_contract"),
+    )
+
+    assert result.data is not None
+    assert result.data.topics[1].rows == (placeholder,)
+    assert result.data.returned_row_count == 2

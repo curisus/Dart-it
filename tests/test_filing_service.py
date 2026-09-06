@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 from dart_crawler.api_models import DartListRow
 from dart_crawler.domain import ReportPeriod
-from dart_crawler.filing_service import FilingService
-from dart_crawler.result import Result
+from dart_crawler.filing_service import FilingService, validate_report_kind
+from dart_crawler.result import ErrorCode, Result
 
 
 def _row(
@@ -103,3 +103,40 @@ def test_quarterly_filing_keeps_first_and_third_quarters_separate() -> None:
         ReportPeriod.THIRD_QUARTER,
         ReportPeriod.FIRST_QUARTER,
     ]
+
+
+def test_unsupported_report_kind_names_the_supported_ones() -> None:
+    """Every sibling tool answers an unknown enum with its supported values."""
+    service = FilingService(_RejectingFilingSource())
+
+    result = service.list("00126380", "삼성전자", "review")
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    supported = result.error.details["supported_report_kinds"]
+    assert supported == [
+        {"key": "audit", "label": "감사보고서"},
+        {"key": "half_year_review", "label": "반기검토보고서"},
+        {"key": "quarterly_review", "label": "분기검토보고서"},
+    ]
+    assert result.next_action is not None
+
+
+class _RejectingFilingSource:
+    def list_disclosures(
+        self,
+        corp_code: str,
+        report_detail_type: str,
+    ) -> Result[tuple[DartListRow, ...]]:
+        raise AssertionError((corp_code, report_detail_type))
+
+
+def test_report_kind_is_validated_before_any_lookup() -> None:
+    """A caller resolving the company first would report "회사 없음" instead."""
+    violation = validate_report_kind("review")
+
+    assert violation is not None
+    assert violation.error.code is ErrorCode.INVALID_INPUT
+    assert "supported_report_kinds" in violation.error.details
+    assert validate_report_kind("audit") is None

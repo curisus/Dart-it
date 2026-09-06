@@ -5,7 +5,7 @@ from typing import ClassVar, Final
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from dart_crawler.excel_argument_validation import validate_excel_query
-from dart_crawler.excel_contract_errors import excel_failure
+from dart_crawler.excel_contract_errors import ExcelFailureReason, excel_failure
 from dart_crawler.excel_cursor import (
     CursorBinding,
     CursorSecret,
@@ -39,8 +39,10 @@ def validate_excel_request(
 ) -> Result[ValidatedExcelRequest]:
     try:
         request = ExcelLoadRequest.model_validate(raw_request)
-    except ValidationError:
-        failure: Result[ValidatedExcelRequest] = excel_failure("invalid_request")
+    except ValidationError as error:
+        failure: Result[ValidatedExcelRequest] = excel_failure(
+            _validation_reason(error)
+        )
         return failure
     validated = validate_excel_query(request.domain, request.arguments)
     if validated.data is None:
@@ -106,3 +108,27 @@ def prepare_excel_request(
             next_action=validated.next_action,
         )
     return bind_excel_cursor(validated.data, cursor_secret=cursor_secret)
+
+
+def _validation_reason(error: ValidationError) -> ExcelFailureReason:
+    """Name the one request error a caller can act on without guessing.
+
+    Every other malformed request is answered as invalid_request, but a page
+    size over the limit is a single number the caller chose and can lower, so
+    it is worth saying which field and which limit.
+    """
+    details = error.errors()
+    # Only a lone upper-bound violation. A page size of the wrong type or below
+    # one is not a limit to lower, and naming the page size while another field
+    # is also wrong would send the caller back for a second, unguided refusal.
+    if len(details) != 1:
+        return "invalid_request"
+    detail = details[0]
+    location = detail.get("loc", ())
+    if (
+        location
+        and location[0] == "page_size"
+        and detail.get("type") == "less_than_equal"
+    ):
+        return "page_size_exceeds_limit"
+    return "invalid_request"

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from dart_crawler.document_model import BlockKind, DocumentBlock
+from dart_crawler.document_model import BlockKind, DocumentBlock, DocumentSection
 from dart_crawler.document_validation import ValidationSummary
 from dart_crawler.result import WarningCode
 from dart_crawler.source_coverage import source_coverage_metadata
@@ -41,14 +41,17 @@ def write_workbook(
     workbook = Workbook()
     metadata_sheet = workbook.worksheets[0]
     metadata_sheet.title = METADATA_SHEET
-    metadata = _metadata(context, status, validation_summary)
+    # Sheet names are settled first because the note-heading map has to point at
+    # the sheet a reader will actually open, and a filer that numbers a note's
+    # sub-items 1., 2., 3. produces a second "주석 3" that is named "주석 3_2".
+    sheet_names = _assign_sheet_names(context.document.sections)
+    metadata = _metadata(context, status, validation_summary, sheet_names)
     for row_number, (key, value) in enumerate(metadata.items(), start=1):
         metadata_sheet.cell(row=row_number, column=1, value=key)
         metadata_sheet.cell(row=row_number, column=2, value=parse_cell_value(value))
-    used_names = {METADATA_SHEET}
-    for section in context.document.sections:
-        sheet_name = _sheet_name(section.title, used_names)
-        used_names.add(sheet_name)
+    for sheet_name, section in zip(
+        sheet_names, context.document.sections, strict=True
+    ):
         _write_section(workbook.create_sheet(sheet_name), section.blocks)
     apply_workbook_layout(workbook)
     with tempfile.NamedTemporaryFile(
@@ -97,10 +100,23 @@ def _write_cell(sheet: Worksheet, row: int, column: int, source_text: str) -> No
         cell.number_format = number_format
 
 
+def _assign_sheet_names(
+    sections: tuple[DocumentSection, ...],
+) -> tuple[str, ...]:
+    used_names = {METADATA_SHEET}
+    names: list[str] = []
+    for section in sections:
+        sheet_name = _sheet_name(section.title, used_names)
+        used_names.add(sheet_name)
+        names.append(sheet_name)
+    return tuple(names)
+
+
 def _metadata(
     context: ExportContext,
     status: CollectionStatus,
     validation_summary: ValidationSummary,
+    sheet_names: tuple[str, ...],
 ) -> dict[str, str]:
     shared_metadata = shared_metadata_expectations(
         context,
@@ -114,6 +130,17 @@ def _metadata(
     section_statuses = [
         f"{section.title}:{_section_status(section.blocks)}"
         for section in context.document.sections
+    ]
+    # Note sheets are named "주석 N" because a worksheet name may not exceed 31
+    # characters, so the workbook carries the sheet-to-title map its tabs cannot
+    # hold. The key is the sheet name rather than the section title so a
+    # duplicated note number still points at the sheet holding that heading.
+    note_headings = [
+        f"{sheet_name}={section.heading}"
+        for sheet_name, section in zip(
+            sheet_names, context.document.sections, strict=True
+        )
+        if section.heading is not None
     ]
     all_warnings = context.comparison_warnings + context.collection_warnings
     warning_codes = [warning.code.value for warning in all_warnings]
@@ -146,6 +173,7 @@ def _metadata(
         "missing_section_count": "0",
         "missing_sections": "",
         "section_statuses": " | ".join(section_statuses),
+        "note_headings": " | ".join(note_headings),
         "warning_count": str(len(warning_codes)),
         "warning_codes": ",".join(warning_codes),
         **coverage_metadata,

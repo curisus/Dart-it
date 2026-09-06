@@ -21,6 +21,7 @@ from typing import Final, NoReturn
 
 import httpx2
 
+from dart_crawler.amount_checker import matching_unit_scale
 from dart_crawler.attachments import AttachmentService
 from dart_crawler.dart_api import DartApi
 from dart_crawler.document_model import (
@@ -61,9 +62,6 @@ _BALANCE_SHEET_DIVISION: Final = "BS"
 # would mean the guard moved rather than that the script asked for too much.
 _BATCH_CELL_LIMIT: Final = MAX_RESPONSE_CELLS - 2_000
 _OFFICIAL_ACCOUNT_NAMES: Final = ("자산총계", "부채총계", "자본총계")
-# A Korean statement states amounts in won, thousands, millions, or 억; the
-# official API always answers in won, so a match is exact after one scaling.
-_SCALE_FACTORS: Final = (1, 1_000, 1_000_000, 100_000_000)
 _STATEMENTS_ALIAS: Final = "statements"
 _NOTE_KIND: Final = "note"
 _BALANCE_SHEET_KIND: Final = "balance_sheet"
@@ -638,17 +636,17 @@ def _match_official_amount(
             value = _numeric(cell)
             if value is None or target is None:
                 continue
-            for scale in _SCALE_FACTORS:
-                if value * scale == target:
-                    return {
-                        "account": account,
-                        "matched": True,
-                        "official_amount": official,
-                        "source_cell": cell,
-                        "source_row": list(row),
-                        "column_index": column,
-                        "unit_scale": scale,
-                    }
+            scale = matching_unit_scale(value, target)
+            if scale is not None:
+                return {
+                    "account": account,
+                    "matched": True,
+                    "official_amount": official,
+                    "source_cell": cell,
+                    "source_row": list(row),
+                    "column_index": column,
+                    "unit_scale": scale,
+                }
         return {
             "account": account,
             "matched": False,

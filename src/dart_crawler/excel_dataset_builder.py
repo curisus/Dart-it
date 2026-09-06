@@ -10,6 +10,7 @@ from dart_crawler.excel_dataset_identity import (
 )
 from dart_crawler.excel_json_models import model_json_object
 from dart_crawler.excel_normalization_errors import normalization_error
+from dart_crawler.excel_numeric_columns import coerce_numeric_columns
 from dart_crawler.excel_page_models import ExcelDataDomain
 from dart_crawler.excel_row_normalization import (
     CellFailure,
@@ -52,6 +53,10 @@ def normalize_excel_source(
             )
         case NormalizedExcelTable() as table:
             pass
+    # Amounts become numbers before the fingerprints are taken, so the remote
+    # page and the local workbook carry the identical values they are compared
+    # by, rather than one holding text and the other a number.
+    rows, numeric_columns = coerce_numeric_columns(table.columns, table.rows)
     request_fingerprint = normalized_request_fingerprint(
         source.domain,
         source.arguments,
@@ -61,7 +66,7 @@ def normalize_excel_source(
         SourceIdentityState(
             domain=source.domain,
             columns=table.columns,
-            rows=table.rows,
+            rows=rows,
             warnings=source.warnings,
             provenance=source.provenance,
         )
@@ -79,10 +84,11 @@ def normalize_excel_source(
             source_fingerprint=source_fingerprint,
             dataset_id=dataset_id,
             columns=table.columns,
-            rows=table.rows,
+            numeric_columns=numeric_columns,
+            rows=rows,
             warnings=source.warnings,
             provenance=source.provenance,
-            total_rows=len(table.rows),
+            total_rows=len(rows),
         ),
         next_action=source.next_action,
     )

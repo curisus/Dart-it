@@ -38,12 +38,14 @@ def test_report_topics_use_requested_group_order_and_first_seen_keys() -> None:
         topic="audit_opinion",
         label="감사의견",
         row_count=1,
+        substantive_row_count=1,
         rows=({"z": "audit", "later": 2},),
     )
     dividend = ReportTopicRows(
         topic="dividend",
         label="배당",
         row_count=1,
+        substantive_row_count=1,
         rows=(
             {
                 "corp_code": "00123456",
@@ -78,7 +80,7 @@ def test_report_topics_use_requested_group_order_and_first_seen_keys() -> None:
 
 def test_report_topics_all_empty_retains_group_baseline() -> None:
     groups = tuple(
-        ReportTopicRows(topic=topic, label=topic, row_count=0, rows=())
+        ReportTopicRows(topic=topic, label=topic, row_count=0, substantive_row_count=0, rows=())
         for topic in reversed(_TOPICS)
     )
     responses = replace(

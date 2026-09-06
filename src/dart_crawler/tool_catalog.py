@@ -90,7 +90,15 @@ def _register_document_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         report_kind: str,
         ctx: Context,
     ) -> Result[tuple[Filing, ...]]:
-        """List recent five-year representative filings."""
+        """List recent five-year representative filings.
+
+        report_kind selects the report family: audit (감사보고서),
+        half_year_review (반기검토보고서), quarterly_review (분기검토보고서).
+        It is declared as a string rather than an enum on purpose: an enum
+        makes the MCP layer reject an unknown value with a protocol error,
+        and every failure of this server has to arrive as a Result envelope
+        carrying the supported values.
+        """
         return run(
             ctx,
             lambda service: service.list_report_filings(corp_code, report_kind),
@@ -118,6 +126,10 @@ def _register_document_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         Each entry carries the section_id, title, kind, and cell count needed to
         choose what to request from get_report_sections, without returning any
         of the section content.
+
+        Note titles are normalized to "주석 N" so they fit a worksheet name;
+        the heading field keeps the source line ("28. 재무위험관리") so one note
+        can be selected without requesting every note to search them.
         """
         return run(
             ctx,
@@ -225,7 +237,10 @@ def _register_financial_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         idx_cl_code selects the indicator family: M210000 profitability,
         M220000 stability, M230000 growth, M240000 activity. Amounts are
         returned verbatim as KRW strings (commas possible) and are never
-        converted.
+        converted. OpenDART leaves idx_val blank for indicators it does not
+        publish, several of them for every filer; this fetch is all-or-nothing
+        so a blank is never a collection failure, and
+        empty_indicator_count says how many of the returned rows are blank.
         """
         return run(
             ctx,
@@ -255,7 +270,15 @@ def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         stock ticker). reprt_code selects the filing: 11011 annual, 11012
         half-year, 11013 Q1, 11014 Q3. Data covers fiscal year 2015 onward.
         Up to ten topics per call; each topic's rows are returned verbatim
-        with every source field. Supported topics: audit_opinion (auditor
+        with every source field. OpenDART answers "해당 없음" with one row whose
+        fields are all "-", so each topic reports substantive_row_count beside
+        row_count and a topic of only such rows counts as empty: all empty is
+        NOT_FOUND, some empty is PARTIAL_COLLECTION. Amount and hour fields carry
+        whatever unit the filer wrote in its own table, which differs between
+        filers and is sometimes inside the value ("54,000천원", "USD 280,000"):
+        OpenDART relays the text and states no scale, so read the unit from the
+        filing itself through get_report_sections rather than assuming one. Supported topics:
+        audit_opinion (auditor
         name, audit opinion, emphasis-of-matter and key audit matters),
         audit_service_contract (audit fee and service contract),
         non_audit_service_contract (non-audit service contracts with the
@@ -350,7 +373,9 @@ def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         get_ownership_reports, DART's own DS005 endpoints demand this range
         rather than answering an unbounded history. Up to ten event_types
         per call; each type's rows are returned verbatim with every source
-        field, in request order. Supported event_types, grouped for
+        field, in request order. DS005 rows carry no receipt-date field of
+        their own; the receipt date is the first eight digits of rcept_no
+        (20260310002820 was filed on 2026-03-10). Supported event_types, grouped for
         reference (an unknown value fails with the full list in its error
         details' supported_event_types):
         distress — bankruptcy, business_suspension, rehabilitation_filing,

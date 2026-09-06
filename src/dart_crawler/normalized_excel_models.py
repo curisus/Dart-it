@@ -53,6 +53,9 @@ class NormalizedExcelDataset(BaseModel):
     source_fingerprint: str = Field(pattern=_FINGERPRINT_PATTERN)
     dataset_id: str = Field(pattern=_FINGERPRINT_PATTERN)
     columns: tuple[str, ...]
+    # Columns whose OpenDART text was read as a number; they carry a thousands
+    # display format and both the writer and its validation derive it from here.
+    numeric_columns: tuple[str, ...] = ()
     rows: tuple[ExcelRow, ...]
     warnings: tuple[WarningInfo, ...] = ()
     provenance: NormalizedExcelProvenance
@@ -62,6 +65,9 @@ class NormalizedExcelDataset(BaseModel):
     def validate_dataset(self) -> NormalizedExcelDataset:
         if len(set(self.columns)) != len(self.columns):
             msg = "normalized columns must be unique"
+            raise ValueError(msg)
+        if not set(self.numeric_columns) <= set(self.columns):
+            msg = "numeric columns must be a subset of columns"
             raise ValueError(msg)
         if self.total_rows != len(self.rows):
             msg = "normalized row count must match total_rows"

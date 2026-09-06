@@ -93,7 +93,24 @@ ignore = [
 "api/*.py" = ["INP001"]
 # Standalone validation entry points, run by hand rather than imported: their
 # product is the evidence they print, so stdout is the output channel.
-"scripts/*.py" = ["INP001", "T201"]
+"scripts/**/*.py" = ["INP001", "T201"]
+# The fitness harness is promoted evidence tooling: its judgements must stay
+# byte-identical to the run that produced the campaign report, so it is kept as
+# written rather than restructured to satisfy style rules. It reads arbitrary
+# JSON envelopes (ANN401), dispatches through one uniform lambda table whose
+# unused first argument keeps the signatures identical (ARG005), and narrows
+# with assert (S101).
+"scripts/fitness/*.py" = [
+    "ANN401",
+    "ARG005",
+    "C901",
+    "EM102",
+    "PERF401",
+    "RUF046",
+    "S101",
+    "SIM113",
+    "TRY003",
+]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
