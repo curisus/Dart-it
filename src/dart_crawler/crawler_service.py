@@ -39,6 +39,7 @@ from dart_crawler.domains.registration_statements import (
 )
 from dart_crawler.domains.report_topics import ReportTopicData, ReportTopicService
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
+from dart_crawler.fallback_axis import FALLBACK_AXIS_KEY, FallbackAxis
 from dart_crawler.filing_service import FilingService
 from dart_crawler.http_client import HttpClient
 from dart_crawler.markdown_export import MarkdownExportedFile, MarkdownExportService
@@ -305,6 +306,9 @@ class CrawlerService:
                 WarningInfo(
                     code=WarningCode.FALLBACK_SOURCE_USED,
                     message="본문 작성일을 찾지 못해 접수일자를 파일명에 사용했습니다.",
+                    details={
+                        FALLBACK_AXIS_KEY: FallbackAxis.FILENAME_DATE.value
+                    },
                 ),
             )
         correction_chain = _correction_chain(self._api, disclosure.data)

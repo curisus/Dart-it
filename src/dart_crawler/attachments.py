@@ -11,6 +11,7 @@ from typing import Final, Protocol, assert_never
 from bs4 import BeautifulSoup
 
 from dart_crawler.domain import Attachment
+from dart_crawler.fallback_axis import FALLBACK_AXIS_KEY, FallbackAxis
 from dart_crawler.result import (
     ErrorCode,
     JsonObject,
@@ -806,7 +807,7 @@ def _zip_warning_details(
     source_rcept_nos: tuple[str, ...] = (),
 ) -> JsonObject:
     """Build safe diagnostic details for ZIP fallback warnings."""
-    details: JsonObject = {}
+    details: JsonObject = {FALLBACK_AXIS_KEY: FallbackAxis.SOURCE.value}
     if requested_reason is not None:
         details["requested_zip_reason"] = requested_reason
     if source_reason is not None:

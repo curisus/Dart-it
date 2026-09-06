@@ -1065,3 +1065,14 @@ def test_a_repeated_note_number_keeps_each_heading_with_its_own_section() -> Non
         ("주석 3", "3. 금융상품"),
         ("주석 3", "3. 중요한 회계추정"),
     ]
+
+
+def test_a_parser_fallback_names_its_axis() -> None:
+    """FALLBACK_SOURCE_USED also reports source and filename substitutions."""
+    result = parse_xml_document(b"<document><heading>body</heading><p>text</p>")
+
+    assert result.ok is True
+    assert [warning.code.value for warning in result.warnings] == [
+        "FALLBACK_SOURCE_USED"
+    ]
+    assert result.warnings[0].details["fallback_axis"] == "parser"

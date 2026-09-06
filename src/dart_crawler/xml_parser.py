@@ -5,6 +5,7 @@ from __future__ import annotations
 from defusedxml import ElementTree
 
 from dart_crawler.document_model import ParsedDocument
+from dart_crawler.fallback_axis import FallbackAxis
 from dart_crawler.html_parser import parse_html_document
 from dart_crawler.result import (
     ErrorCode,
@@ -25,6 +26,7 @@ def parse_xml_document(content: bytes) -> Result[ParsedDocument]:
             WarningInfo(
                 code=WarningCode.FALLBACK_SOURCE_USED,
                 message="엄격한 XML 해석에 실패해 안전한 HTML 호환 파서를 사용했습니다.",
+                details={"fallback_axis": FallbackAxis.PARSER.value},
             ),
         )
     parsed = parse_html_document(content, source_type="xml")

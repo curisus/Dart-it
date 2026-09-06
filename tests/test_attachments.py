@@ -87,6 +87,8 @@ def test_viewer_fallback_uses_fixed_viewer_identifier() -> None:
     assert result.data is not None
     assert result.data[0].attachment_id == "viewer:20260310002820:111"
     assert result.warnings[0].code.value == "FALLBACK_SOURCE_USED"
+    # One code covers three unrelated substitutions; the axis says which.
+    assert result.warnings[0].details["fallback_axis"] == "source"
 
 
 def test_viewer_fallback_reads_attachment_options() -> None:
