@@ -1,0 +1,12 @@
+[
+  {"type": "envelope_contract", "record": "search"},
+  {"type": "envelope_contract", "record": "fs_ofs"},
+  {"type": "row_count_consistency", "record": "fs_ofs", "rows_key": "accounts"},
+  {"type": "balance_identity", "record": "fs_ofs"},
+  {"type": "envelope_contract", "record": "xlsx_filings"},
+  {"type": "xlsx_query", "path": "<runs_root>\\SMOKE1\\SMOKE\\xlsx\\list_report_filings.xlsx", "expect_total_rows": 5, "expect_domain": "list_report_filings"},
+  {"type": "equal_data", "records": ["search", "remote_search"]},
+  {"type": "page_sum", "records": ["remote_page", "remote_page_p1", "remote_page_p2"]},
+  {"type": "sla_p95", "records": ["fs_ofs", "remote_search", "remote_page"], "limit_ms": 10000},
+  {"type": "expect_error", "record": "search", "code": "INVALID_INPUT", "name": "negative-control (must FAIL)"}
+]
