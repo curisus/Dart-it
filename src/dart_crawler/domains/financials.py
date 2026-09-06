@@ -18,12 +18,30 @@ from dart_crawler.domains.query_guards import (
     guard_row_count,
 )
 from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
-from dart_crawler.result import ErrorCode, Result, error_info
+from dart_crawler.result import (
+    ErrorCode,
+    JsonObject,
+    JsonValue,
+    Result,
+    WarningCode,
+    WarningInfo,
+    error_info,
+)
 
+# OpenDART answers "no data" with one status for every reason, so a missing
+# consolidated statement and a wrong year or report code arrive identically.
+# The wording therefore offers the retry without asserting the cause: the
+# 2026-09-06 campaign followed the old text, retried with OFS, and hit the
+# same NOT_FOUND because the year simply had no statements at all.
 _CFS_NOT_FOUND_NEXT_ACTION: Final = (
-    '연결재무제표가 없는 회사일 수 있습니다. fs_div="OFS"(별도)로 다시 시도하세요.'
+    "해당 회사·사업연도의 재무제표를 찾지 못했습니다. "
+    '연결재무제표가 없는 회사라면 fs_div="OFS"(별도)로, '
+    "그래도 없으면 다른 bsns_year 또는 reprt_code로 확인하세요."
 )
 _SPLIT_COMPANIES_NEXT_ACTION: Final = "회사를 나누어 호출하세요."
+# Indicator names listed in the warning; a longer list is counted, not spelled
+# out, so one warning cannot outgrow the response it describes.
+_MAX_LISTED_EMPTY_INDICATORS: Final = 20
 
 
 class FinancialSource(Protocol):
@@ -276,5 +294,32 @@ class FinancialsService:
                 returned_row_count=len(fetched.data),
                 indicators=fetched.data,
             ),
-            warnings=fetched.warnings,
+            warnings=fetched.warnings + _empty_indicator_warnings(fetched.data),
         )
+
+
+def _empty_indicator_warnings(
+    indicators: tuple[FinancialIndexRow, ...],
+) -> tuple[WarningInfo, ...]:
+    """Report indicators OpenDART returned with no value.
+
+    A blank idx_val is indistinguishable from a collection failure once the
+    rows reach a spreadsheet, and the 2026-09-06 campaign saw 28% of indicator
+    rows arrive blank with nothing said about it.
+    """
+    empty: list[JsonValue] = [
+        row.idx_nm for row in indicators if not row.idx_val.strip()
+    ]
+    if not empty:
+        return ()
+    details: JsonObject = {
+        "empty_indicator_count": len(empty),
+        "empty_indicators": empty[:_MAX_LISTED_EMPTY_INDICATORS],
+    }
+    return (
+        WarningInfo(
+            code=WarningCode.PARTIAL_COLLECTION,
+            message="일부 지표는 OpenDART가 값 없이 반환했습니다.",
+            details=details,
+        ),
+    )

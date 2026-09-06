@@ -533,3 +533,74 @@ def test_full_statements_accepts_exactly_the_row_limit() -> None:
     assert result.ok is True
     assert result.data is not None
     assert result.data.returned_row_count == MAX_RESPONSE_ROWS
+
+
+def _index_row(name: str, value: str) -> FinancialIndexRow:
+    return FinancialIndexRow(
+        bsns_year="2025",
+        corp_code="00126380",
+        idx_cl_code="M220000",
+        idx_cl_nm="안정성지표",
+        idx_nm=name,
+        idx_val=value,
+    )
+
+
+def test_indicators_returned_without_a_value_are_reported() -> None:
+    """A blank idx_val reads as a collection failure once it reaches a sheet."""
+    source = _IndicatorSource(
+        (
+            _index_row("부채비율", "45.6"),
+            _index_row("당좌비율", ""),
+            _index_row("이자보상배율", "  "),
+        )
+    )
+    service = FinancialsService(source)
+
+    result = service.indicators(("00126380",), 2025, "11011", "M220000")
+
+    assert result.ok is True
+    assert [warning.code for warning in result.warnings] == [
+        WarningCode.PARTIAL_COLLECTION
+    ]
+    details = result.warnings[0].details
+    assert details["empty_indicator_count"] == 2
+    assert details["empty_indicators"] == ["당좌비율", "이자보상배율"]
+
+
+def test_indicators_with_every_value_present_warn_about_nothing() -> None:
+    source = _IndicatorSource((_index_row("부채비율", "45.6"),))
+    service = FinancialsService(source)
+
+    result = service.indicators(("00126380",), 2025, "11011", "M220000")
+
+    assert result.ok is True
+    assert result.warnings == ()
+
+
+@dataclass(slots=True)
+class _IndicatorSource:
+    rows: tuple[FinancialIndexRow, ...]
+
+    def fetch_financial_accounts(
+        self,
+        query: FinancialQuery,
+    ) -> Result[tuple[FinancialAccount, ...]]:
+        raise AssertionError(query)
+
+    def fetch_major_accounts(
+        self,
+        corp_codes: tuple[str, ...],
+        business_year: int,
+        report_code: str,
+    ) -> Result[tuple[MajorAccountRow, ...]]:
+        raise AssertionError((corp_codes, business_year, report_code))
+
+    def fetch_financial_indexes(
+        self,
+        corp_codes: tuple[str, ...],
+        business_year: int,
+        report_code: str,
+        index_class: str,
+    ) -> Result[tuple[FinancialIndexRow, ...]]:
+        return Result.success(self.rows)
