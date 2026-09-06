@@ -83,7 +83,7 @@ def test_candidate_symlinks_are_rejected_without_touching_target(
     output_root.mkdir()
     target = tmp_path / "outside-target"
     _ = target.write_bytes(b"outside")
-    final_path = output_root / "search_companies.xlsx"
+    final_path = output_root / "search_companies_테스트.xlsx"
     candidate = final_path if candidate_kind == "final" else final_path.with_suffix(
         ".xlsx.lock"
     )

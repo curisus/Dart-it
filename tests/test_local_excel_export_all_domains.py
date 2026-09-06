@@ -56,7 +56,15 @@ async def test_actual_local_tool_executes_every_domain_exactly_once(
         assert result.warnings == ()
         exported = result.data
         assert exported is not None
-        assert exported.filename == f"{case.domain.value}.xlsx"
+        # U-02: the name identifies the request, so five yearly exports in one
+        # folder are told apart without opening any of them.
+        assert exported.filename.startswith(f"{case.domain.value}_")
+        assert exported.filename.endswith(".xlsx")
+        for value in case.raw.values():
+            if isinstance(value, str) and value:
+                assert "_".join(value.split()) in exported.filename
+            elif isinstance(value, int) and not isinstance(value, bool):
+                assert str(value) in exported.filename
         assert Path(exported.absolute_path).parent == output_root.resolve()
         workbook = load_workbook(
             exported.absolute_path,

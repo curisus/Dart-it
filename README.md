@@ -263,7 +263,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 | --- | --- | --- |
 | `export_report_excel` | `rcept_no`, `attachment_id` | 선택한 첨부를 검색·계산 가능한 `.xlsx`로 생성합니다. `수집정보` 시트와 원문 순서의 구역별 시트를 만들고, 저장 후 원문 셀·병합 범위와 다시 대조합니다. 재무상태표, 손익·포괄손익, 자본변동표, 현금흐름표 중 누락이 있으면 파일을 만들지 않습니다. |
 | `export_report_markdown` | `rcept_no`, `attachment_id` | 선택한 첨부의 의견·재무제표·주석·기타 구역을 원문 순서의 `.md` 파일 하나로 생성합니다. 핵심 재무제표가 빠져도 있는 내용을 생성하고 `missing_sections`와 `collection_status`로 알립니다. |
-| `export_query_excel` | `domain`, `arguments` | 13개 조회 영역 중 하나의 전체 정규화 결과를 `.xlsx`로 생성합니다. 사용자가 경로나 파일명을 지정하지 않으며, `DART_MCP_OUTPUT_DIR` 또는 프로젝트의 `output` 폴더에 `<domain>.xlsx`, `<domain>_2.xlsx` 순서로 저장합니다. |
+| `export_query_excel` | `domain`, `arguments` | 13개 조회 영역 중 하나의 전체 정규화 결과를 `.xlsx`로 생성합니다. 사용자가 경로나 파일명을 지정하지 않으며, `DART_MCP_OUTPUT_DIR` 또는 프로젝트의 `output` 폴더에 저장합니다. 파일명은 `<domain>`에 요청 인자를 이어 붙여 만들고(`get_financial_statements_00126380_2025_11011_CFS.xlsx`) 이름이 겹치면 `_2`, `_3`을 붙입니다. `metadata` 시트에는 요청 인자가 `argument.<이름>` 행으로 기록됩니다. |
 
 기존 첨부 파일 생성 도구 2개는 접수번호, 첨부 식별자, 원문 SHA-256 값이 같은 기존 파일을 재사용합니다. SHA-256은 같은 원문인지 확인하기 위한 고정 길이 식별값입니다. 이미지 전용 내용은 OCR하지 않고 자리표시자로 남기며, 이 경우 `partial` 상태와 경고가 반환될 수 있습니다.
 
@@ -378,7 +378,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 
 ### 로컬 조회 결과 XLSX 제한
 
-`export_query_excel`은 데이터 시트마다 헤더 1행과 데이터 최대 1,048,575행을 저장하고, 열은 최대 16,384개까지 허용합니다. 긴 문자열은 Excel 한계에 맞춰 32,767자로 자릅니다. 큰 정수와 실수는 Excel 저장 방식 때문에 원격 JSON과 정밀도나 다시 열린 타입이 달라질 수 있습니다. `=`, `+`, `-`, `@`로 시작하는 문자열도 수식으로 실행되지 않도록 문자열 셀로 저장합니다. 상세한 정밀도·빈 문자열·음수 0 처리 기준은 [대용량 Excel 데이터 전달 계약](docs/unlimited_excel_delivery.md)에 정리되어 있습니다.
+`export_query_excel`은 데이터 시트마다 헤더 1행과 데이터 최대 1,048,575행을 저장하고, 열은 최대 16,384개까지 허용합니다. 긴 문자열은 Excel 한계에 맞춰 32,767자로 자릅니다. 금액·지표 필드(`thstrm_amount` 계열, `idx_val`)는 열 전체가 숫자로 읽힐 때 숫자 셀 + `#,##0` 계열 서식으로 저장되어 SUM·정렬·피벗이 바로 동작합니다. `corp_code`·`rcept_no` 같은 식별자는 숫자만으로 이루어져 있어도 앞자리 0이 사라지지 않도록 문자열로 남습니다. 큰 정수와 실수는 Excel 저장 방식 때문에 원격 JSON과 정밀도나 다시 열린 타입이 달라질 수 있습니다. `=`, `+`, `-`, `@`로 시작하는 문자열도 수식으로 실행되지 않도록 문자열 셀로 저장합니다. 상세한 정밀도·빈 문자열·음수 0 처리 기준은 [대용량 Excel 데이터 전달 계약](docs/unlimited_excel_delivery.md)에 정리되어 있습니다.
 
 ### 지원 값 상세
 

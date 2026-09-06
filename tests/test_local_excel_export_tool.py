@@ -8,7 +8,9 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 import dart_crawler.mcp_server as mcp_server
+from dart_crawler.api_models import FinancialAccount
 from dart_crawler.domain import Company, Market, MatchConfidence
+from dart_crawler.domains.financials import FinancialStatementData
 from dart_crawler.excel_query_export_models import ExcelExportResult
 from dart_crawler.mcp_server import mcp
 from dart_crawler.query_limits import EXCEL_POLICY
@@ -135,7 +137,7 @@ async def test_actual_local_tool_publishes_populated_native_workbook(
         "total_rows",
         "sheet_names",
     ]
-    assert exported.filename == "search_companies.xlsx"
+    assert exported.filename == "search_companies_테스트_회사.xlsx"
     assert Path(exported.absolute_path) == (output_root / exported.filename).resolve()
     assert exported.total_rows == 1
     assert exported.sheet_names == ("data", "metadata", "warnings")
@@ -160,6 +162,8 @@ async def test_actual_local_tool_publishes_populated_native_workbook(
             "key",
             "schema_version",
             "domain",
+            "argument.company_query",
+            "argument.report_kind",
             "request_fingerprint",
             "source_fingerprint",
             "dataset_id",
@@ -168,6 +172,7 @@ async def test_actual_local_tool_publishes_populated_native_workbook(
             "provenance",
             "data_sheet_names",
         ]
+        assert dict(metadata)["argument.company_query"] == "테스트 회사"
         assert dict(metadata)["generated_at_utc"] == "2026-01-02T03:04:05.123456Z"
         assert dict(metadata)["dataset_id"] == exported.dataset_id
         warnings = [
@@ -223,5 +228,74 @@ async def test_actual_local_tool_publishes_empty_header_only_workbook(
         }
         assert metadata["total_rows"] == 0
         assert metadata["generated_at_utc"] == "2026-02-03T04:05:06.000007Z"
+    finally:
+        workbook.close()
+
+
+@pytest.mark.anyio
+async def test_export_writes_amount_cells_as_formatted_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A text amount cannot be summed; the workbook must carry a real number."""
+    account = FinancialAccount(
+        fs_div="CFS",
+        sj_div="BS",
+        bsns_year="2025",
+        reprt_code="11011",
+        account_id="ifrs-full_Assets",
+        account_nm="자산총계",
+        thstrm_amount="566942110000000",
+        corp_code="00126380",
+    )
+    factory = RecordingExcelServiceFactory(
+        replace(
+            empty_excel_service_responses(),
+            get_financial_statements=Result.success(
+                FinancialStatementData(
+                    corp_code="00126380",
+                    bsns_year=2025,
+                    reprt_code="11011",
+                    fs_div="CFS",
+                    returned_row_count=1,
+                    accounts=(account,),
+                )
+            ),
+        )
+    )
+    clock = RecordingClock(datetime(2026, 3, 4, 5, 6, 7, 8, tzinfo=UTC))
+    _ = install_local_export_runtime(monkeypatch, tmp_path, factory, clock)
+
+    called = await mcp.call_tool(
+        "export_query_excel",
+        {
+            "request": {
+                "domain": "get_financial_statements",
+                "arguments": {
+                    "corp_code": "00126380",
+                    "bsns_year": 2025,
+                    "reprt_code": "11011",
+                    "fs_div": "CFS",
+                },
+            }
+        },
+    )
+
+    assert isinstance(called, CallToolResult)
+    result = Result[ExcelExportResult].model_validate(structured_content(called))
+    assert result.ok is True
+    exported = result.data
+    assert exported is not None
+    workbook = load_workbook(exported.absolute_path, read_only=False, data_only=False)
+    try:
+        sheet = workbook["data"]
+        assert isinstance(sheet, Worksheet)
+        headers = [cell.value for cell in sheet[1]]
+        amount_column = headers.index("thstrm_amount") + 1
+        code_column = headers.index("corp_code") + 1
+        amount_cell = sheet.cell(2, amount_column)
+        assert amount_cell.value == 566942110000000
+        assert amount_cell.number_format == "#,##0"
+        assert sheet.cell(2, code_column).value == "00126380"
     finally:
         workbook.close()

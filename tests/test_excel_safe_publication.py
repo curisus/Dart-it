@@ -23,23 +23,23 @@ from tests.local_excel_export_test_support import RecordingClock
 def test_existing_final_and_lock_are_preserved_with_suffixes(tmp_path: Path) -> None:
     output_root = tmp_path / "output"
     output_root.mkdir()
-    first_final = output_root / "search_companies.xlsx"
+    first_final = output_root / "search_companies_테스트.xlsx"
     _ = first_final.write_bytes(b"existing-final")
 
     first_result = _publish(_dataset(), output_root)
 
     assert first_result.ok is True
     assert first_result.data is not None
-    assert first_result.data.filename == "search_companies_2.xlsx"
+    assert first_result.data.filename == "search_companies_테스트_2.xlsx"
     assert first_final.read_bytes() == b"existing-final"
 
-    second_lock = output_root / "search_companies_3.xlsx.lock"
+    second_lock = output_root / "search_companies_테스트_3.xlsx.lock"
     _ = second_lock.write_bytes(b"existing-lock")
     second_result = _publish(_dataset(), output_root)
 
     assert second_result.ok is True
     assert second_result.data is not None
-    assert second_result.data.filename == "search_companies_4.xlsx"
+    assert second_result.data.filename == "search_companies_테스트_4.xlsx"
     assert second_lock.read_bytes() == b"existing-lock"
 
 
@@ -56,7 +56,7 @@ def test_two_concurrent_exports_publish_distinct_complete_files(
     exports = [result.data for result in results]
     assert all(exported is not None for exported in exports)
     filenames = {exported.filename for exported in exports if exported is not None}
-    assert filenames == {"search_companies.xlsx", "search_companies_2.xlsx"}
+    assert filenames == {"search_companies_테스트.xlsx", "search_companies_테스트_2.xlsx"}
     assert list(output_root.glob("*.lock")) == []
     assert list(output_root.glob(".*.xlsx")) == []
     for exported in exports:
@@ -80,7 +80,7 @@ def test_temp_is_unpredictable_same_directory_and_published_by_link(
     assert source == temp_path
     assert source.parent == destination.parent == output_root.resolve()
     assert source != destination
-    assert source.name.startswith(".search_companies.")
+    assert source.name.startswith(".search_companies_테스트.")
     assert source.suffix == ".xlsx"
     assert not source.exists()
     assert destination.exists()
@@ -95,7 +95,7 @@ def test_final_appearing_after_lock_is_never_overwritten_or_removed(
 
     assert result.ok is True
     assert result.data is not None
-    assert result.data.filename == "search_companies_2.xlsx"
+    assert result.data.filename == "search_companies_테스트_2.xlsx"
     assert operations.raced_final is not None
     assert operations.raced_final.read_bytes() == b"other-owner"
 
@@ -109,7 +109,7 @@ def test_final_link_race_advances_suffix_without_cross_cleanup(
 
     assert result.ok is True
     assert result.data is not None
-    assert result.data.filename == "search_companies_2.xlsx"
+    assert result.data.filename == "search_companies_테스트_2.xlsx"
     assert operations.raced_final is not None
     _assert_complete_workbook(operations.raced_final)
     _assert_complete_workbook(Path(result.data.absolute_path))

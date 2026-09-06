@@ -100,15 +100,33 @@ def _validate_data_sheet(
         validate_dimensions=False,
     ):
         return False
+    formats = plan.column_number_formats
     for source_index in range(start, end):
         source = plan.dataset.rows[source_index]
         expected = tuple(source[column] for column in plan.dataset.columns)
+        sheet_row = source_index - start + 2
         if not _validate_rows(
             sheet,
             (expected,),
-            start_row=source_index - start + 2,
+            start_row=sheet_row,
             validate_dimensions=False,
         ):
+            return False
+        if not _formats_match(sheet, sheet_row, formats):
+            return False
+    return True
+
+
+def _formats_match(
+    sheet: Worksheet,
+    sheet_row: int,
+    formats: tuple[str | None, ...],
+) -> bool:
+    for column, number_format in enumerate(formats, start=1):
+        if number_format is None:
+            continue
+        cell = sheet.cell(sheet_row, column)
+        if isinstance(cell, MergedCell) or cell.number_format != number_format:
             return False
     return True
 

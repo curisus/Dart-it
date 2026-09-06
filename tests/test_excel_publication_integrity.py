@@ -44,7 +44,7 @@ def test_source_replaced_inside_link_is_removed_when_identity_changes(
 
     result = _publish(output_root)
 
-    final_path = output_root / "search_companies.xlsx"
+    final_path = output_root / "search_companies_테스트.xlsx"
     try:
         assert result.ok is False
         _assert_output_failure(result)
@@ -238,7 +238,7 @@ def test_replaced_destination_is_not_deleted_when_replaced_after_link(
 
     result = _publish(output_root, file_ops=operations)
 
-    final_path = output_root / "search_companies.xlsx"
+    final_path = output_root / "search_companies_테스트.xlsx"
     try:
         assert result.ok is False
         assert result.error is not None
@@ -257,7 +257,7 @@ def test_published_workbook_is_revalidated_after_hardlink(tmp_path: Path) -> Non
 
     result = _publish(output_root, file_ops=operations)
 
-    final_path = output_root / "search_companies.xlsx"
+    final_path = output_root / "search_companies_테스트.xlsx"
     published_bytes = final_path.read_bytes() if final_path.exists() else None
     try:
         assert result.ok is False, (

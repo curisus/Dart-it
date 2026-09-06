@@ -81,16 +81,33 @@ def _write_data_sheet(
         return header_outcome
     start = sheet_index * plan.options.data_rows_per_sheet
     end = min(start + plan.options.data_rows_per_sheet, plan.dataset.total_rows)
+    formats = plan.column_number_formats
     for source_index in range(start, end):
         row = plan.dataset.rows[source_index]
+        sheet_row = source_index - start + 2
         outcome = _write_rows(
             sheet,
             (tuple(row[column] for column in plan.dataset.columns),),
-            start_row=source_index - start + 2,
+            start_row=sheet_row,
         )
         if isinstance(outcome, ExcelProjectionFailure):
             return outcome
+        _apply_number_formats(sheet, sheet_row, formats)
     return WorkbookWritten()
+
+
+def _apply_number_formats(
+    sheet: Worksheet,
+    sheet_row: int,
+    formats: tuple[str | None, ...],
+) -> None:
+    for column, number_format in enumerate(formats, start=1):
+        if number_format is None:
+            continue
+        cell = sheet.cell(sheet_row, column)
+        if isinstance(cell, MergedCell):
+            continue
+        cell.number_format = number_format
 
 
 def _write_rows(

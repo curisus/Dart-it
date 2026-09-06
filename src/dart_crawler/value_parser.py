@@ -14,23 +14,40 @@ _NEGATIVE_FORMULA = re.compile(
 _LEADING_INDENT = re.compile(r"^[ \t\u00a0\u3000]+")
 
 
+def parse_number(text: str, *, unit_multiplier: int = 1) -> int | float | None:
+    """Read a clear amount, or None when the text is not one.
+
+    This is the single definition of what counts as a number in a filing:
+    optional thousands separators, an optional decimal part, and the accounting
+    convention of bracketing negatives. A note-reference list such as "26,34"
+    fails the grouping rule and is therefore not a number.
+    """
+    normalized = text.strip()
+    if not normalized or not _NUMBER.fullmatch(normalized):
+        return None
+    negative = normalized.startswith("(") and normalized.endswith(")")
+    number_text = normalized.strip("()").replace(",", "")
+    try:
+        number = Decimal(number_text) * unit_multiplier
+    except InvalidOperation:
+        return None
+    if negative:
+        number = -number
+    if number == number.to_integral_value():
+        return int(number)
+    return float(number)
+
+
 def parse_cell_value(text: str, *, unit_multiplier: int = 1) -> int | float | str:
     """Parse clear amounts while keeping indented external text as text."""
     normalized = text.strip()
     if not normalized:
         return ""
     if _NUMBER.fullmatch(normalized):
-        negative = normalized.startswith("(") and normalized.endswith(")")
-        number_text = normalized.strip("()").replace(",", "")
-        try:
-            number = Decimal(number_text) * unit_multiplier
-        except InvalidOperation:
+        number = parse_number(normalized, unit_multiplier=unit_multiplier)
+        if number is None:
             return _safe_text(normalized)
-        if negative:
-            number = -number
-        if number == number.to_integral_value():
-            return int(number)
-        return float(number)
+        return number
     indent = _LEADING_INDENT.match(text)
     if indent is not None:
         return indent.group() + normalized
