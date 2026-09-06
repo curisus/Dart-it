@@ -1,9 +1,17 @@
 from typing import Final, Literal
 
-from dart_crawler.result import ErrorCode, Result, WarningInfo, error_info
+from dart_crawler.excel_page_models import MAX_EXCEL_PAGE_SIZE
+from dart_crawler.result import (
+    ErrorCode,
+    JsonObject,
+    Result,
+    WarningInfo,
+    error_info,
+)
 
 type ExcelFailureReason = Literal[
     "invalid_request",
+    "page_size_exceeds_limit",
     "invalid_cursor",
     "cursor_schema_mismatch",
     "cursor_request_mismatch",
@@ -16,6 +24,9 @@ type ExcelFailureReason = Literal[
 
 _RESTART_ACTION: Final = "커서 없이 첫 페이지부터 다시 요청하세요."
 _EXPORT_ACTION: Final = "전체 결과가 필요하면 export_query_excel을 사용하세요."
+_PAGE_SIZE_ACTION: Final = (
+    f"page_size를 {MAX_EXCEL_PAGE_SIZE} 이하로 지정하세요."
+)
 
 
 def excel_failure[T](
@@ -27,6 +38,9 @@ def excel_failure[T](
         case "invalid_request":
             code = ErrorCode.INVALID_INPUT
             next_action = None
+        case "page_size_exceeds_limit":
+            code = ErrorCode.INVALID_INPUT
+            next_action = _PAGE_SIZE_ACTION
         case (
             "invalid_cursor"
             | "cursor_schema_mismatch"
@@ -49,11 +63,19 @@ def excel_failure[T](
             code,
             "Excel 페이지 요청을 완료할 수 없습니다.",
             retryable=False,
-            details={"reason": reason},
+            details=_details(reason),
         ),
         warnings=warnings,
         next_action=next_action,
     )
+
+
+def _details(reason: ExcelFailureReason) -> JsonObject:
+    """Return the reason plus the limit a caller needs to satisfy it."""
+    details: JsonObject = {"reason": reason}
+    if reason == "page_size_exceeds_limit":
+        details["max_page_size"] = MAX_EXCEL_PAGE_SIZE
+    return details
 
 
 def excel_cursor_configuration_failure[T]() -> Result[T]:

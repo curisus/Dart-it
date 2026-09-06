@@ -7,9 +7,16 @@ from dart_crawler.excel_cursor import (
     encode_excel_cursor,
 )
 from dart_crawler.excel_dataset_identity import normalized_request_fingerprint
-from dart_crawler.excel_page_models import ExcelDataDomain, ExcelLoadRequest
-from dart_crawler.excel_request_validation import prepare_excel_request
-from dart_crawler.result import JsonObject
+from dart_crawler.excel_page_models import (
+    MAX_EXCEL_PAGE_SIZE,
+    ExcelDataDomain,
+    ExcelLoadRequest,
+)
+from dart_crawler.excel_request_validation import (
+    prepare_excel_request,
+    validate_excel_request,
+)
+from dart_crawler.result import ErrorCode, JsonObject
 
 
 def _reason(result_error_details: JsonObject) -> str:
@@ -102,3 +109,45 @@ def test_page_size_mismatch_is_independent_of_request_fingerprint() -> None:
     assert result.data is None
     assert result.error is not None
     assert _reason(result.error.details) == "cursor_page_size_mismatch"
+
+
+def test_a_page_size_over_the_limit_names_the_limit() -> None:
+    """Every other malformed request is a guess; this one is a number to lower."""
+    result = validate_excel_request(
+        {
+            "domain": "search_companies",
+            "arguments": {"company_query": "회사"},
+            "page_size": MAX_EXCEL_PAGE_SIZE + 1,
+        }
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.error.details["reason"] == "page_size_exceeds_limit"
+    assert result.error.details["max_page_size"] == MAX_EXCEL_PAGE_SIZE
+    assert result.next_action is not None
+    assert str(MAX_EXCEL_PAGE_SIZE) in result.next_action
+
+
+def test_other_malformed_requests_stay_invalid_request() -> None:
+    result = validate_excel_request({"domain": "unknown", "arguments": {}})
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.details["reason"] == "invalid_request"
+    assert "max_page_size" not in result.error.details
+
+
+def test_a_page_size_of_the_wrong_type_is_not_a_limit_to_lower() -> None:
+    result = validate_excel_request(
+        {
+            "domain": "search_companies",
+            "arguments": {"company_query": "회사"},
+            "page_size": "1000",
+        }
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert _reason(result.error.details) == "invalid_request"
