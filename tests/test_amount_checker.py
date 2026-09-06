@@ -201,3 +201,48 @@ def test_amount_checker_reports_unavailable_when_no_cell_is_numeric() -> None:
     warnings = compare_statement_amounts(document, (_account("100"),))
 
     assert [warning.code.value for warning in warnings] == ["COMPARISON_UNAVAILABLE"]
+
+
+def _account_with_periods(
+    account_nm: str,
+    thstrm: str,
+    frmtrm: str,
+) -> FinancialAccount:
+    return FinancialAccount(
+        fs_div="OFS",
+        sj_div="BS",
+        bsns_year="2025",
+        reprt_code="11011",
+        account_id="ifrs-full_DeferredTaxAssets",
+        account_nm=account_nm,
+        thstrm_amount=thstrm,
+        thstrm_add_amount="",
+        frmtrm_amount=frmtrm,
+        frmtrm_q_amount="",
+        frmtrm_add_amount="",
+        currency="KRW",
+    )
+
+
+def test_an_account_nil_this_period_reconciles_with_its_prior_figure() -> None:
+    """The filing writes "-" this year and keeps last year's figure beside it."""
+    document = _rows_document(("이연법인세자산", "27", "-", "", "176,745,897,214", ""))
+
+    warnings = compare_statement_amounts(
+        document,
+        (_account_with_periods("이연법인세자산", "0", "176745897214"),),
+    )
+
+    assert warnings == ()
+
+
+def test_a_prior_figure_cannot_excuse_a_wrong_current_amount() -> None:
+    """The current period is what the comparison is for."""
+    document = _rows_document(("매출채권", "5", "999,999,999", "176,745,897,214"))
+
+    warnings = compare_statement_amounts(
+        document,
+        (_account_with_periods("매출채권", "676565488743", "176745897214"),),
+    )
+
+    assert [warning.code.value for warning in warnings] == ["AMOUNT_MISMATCH"]

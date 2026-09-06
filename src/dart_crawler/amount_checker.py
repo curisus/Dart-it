@@ -102,11 +102,7 @@ def _row_warning(
     # so every cell is a candidate rather than only the first one.
     cells = row[1:]
     source_values = [value for value in map(_numeric, cells) if value is not None]
-    official_values = [
-        value
-        for value in (_numeric(account.thstrm_amount) for account in candidates)
-        if value is not None
-    ]
+    official_values = _official_amounts(candidates)
     if not official_values or not source_values:
         return WarningInfo(
             code=WarningCode.COMPARISON_UNAVAILABLE,
@@ -119,7 +115,9 @@ def _row_warning(
         "account_name": account_name,
         "statement": kind.value,
         "source_values": list(cells),
-        "official_values": [account.thstrm_amount for account in candidates],
+        "official_values": [
+            str(value) for value in sorted(set(official_values))
+        ],
         "unit_scales": list(AMOUNT_SCALE_FACTORS),
     }
     return WarningInfo(
@@ -127,6 +125,41 @@ def _row_warning(
         message="원문 금액이 어떤 단위 배율로도 OpenDART 금액과 일치하지 않습니다.",
         details=details,
     )
+
+
+def _official_amounts(
+    candidates: tuple[FinancialAccount, ...],
+) -> list[Decimal]:
+    """Return the amounts a source row for these accounts may reconcile with.
+
+    The current period is the one that matters and is the only one accepted
+    while OpenDART reports a figure for it — corrupting the current column of a
+    statement must still raise the warning.
+
+    Prior periods are accepted only for an account OpenDART reports as nil this
+    period. The filed statement writes "-" in that account's current column and
+    keeps last year's figure beside it, and nothing in the parsed table says
+    which column is which, so the prior figure is the only number there is.
+    NAVER's 이연법인세자산 is exactly this: "-" and 176,745,897,214 in the
+    filing, thstrm_amount 0 and frmtrm_amount 176,745,897,214 in OpenDART, in
+    complete agreement.
+    """
+    amounts: list[Decimal] = []
+    for account in candidates:
+        current = _numeric(account.thstrm_amount)
+        if current is not None:
+            amounts.append(current)
+        if current is not None and current != 0:
+            continue
+        amounts.extend(
+            value
+            for value in map(
+                _numeric,
+                (account.frmtrm_amount, account.bfefrmtrm_amount),
+            )
+            if value is not None
+        )
+    return amounts
 
 
 def matching_unit_scale(source_value: Decimal, official_value: Decimal) -> int | None:
