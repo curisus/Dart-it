@@ -117,14 +117,18 @@ def _validation_reason(error: ValidationError) -> ExcelFailureReason:
     size over the limit is a single number the caller chose and can lower, so
     it is worth saying which field and which limit.
     """
-    for detail in error.errors():
-        location = detail.get("loc", ())
-        if (
-            location
-            and location[0] == "page_size"
-            # Only the upper bound. A page size that is the wrong type, or
-            # below one, is not a limit the caller can lower.
-            and detail.get("type") == "less_than_equal"
-        ):
-            return "page_size_exceeds_limit"
+    details = error.errors()
+    # Only a lone upper-bound violation. A page size of the wrong type or below
+    # one is not a limit to lower, and naming the page size while another field
+    # is also wrong would send the caller back for a second, unguided refusal.
+    if len(details) != 1:
+        return "invalid_request"
+    detail = details[0]
+    location = detail.get("loc", ())
+    if (
+        location
+        and location[0] == "page_size"
+        and detail.get("type") == "less_than_equal"
+    ):
+        return "page_size_exceeds_limit"
     return "invalid_request"

@@ -70,6 +70,7 @@ def empty_excel_service_responses() -> ExcelServiceResponses:
                 reprt_code="11011",
                 idx_cl_code="M210000",
                 returned_row_count=0,
+                empty_indicator_count=0,
                 indicators=(),
             )
         ),

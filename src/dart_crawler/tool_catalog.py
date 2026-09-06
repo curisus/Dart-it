@@ -237,7 +237,10 @@ def _register_financial_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         idx_cl_code selects the indicator family: M210000 profitability,
         M220000 stability, M230000 growth, M240000 activity. Amounts are
         returned verbatim as KRW strings (commas possible) and are never
-        converted.
+        converted. OpenDART leaves idx_val blank for indicators it does not
+        publish, several of them for every filer; this fetch is all-or-nothing
+        so a blank is never a collection failure, and
+        empty_indicator_count says how many of the returned rows are blank.
         """
         return run(
             ctx,
@@ -270,10 +273,11 @@ def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         with every source field. OpenDART answers "해당 없음" with one row whose
         fields are all "-", so each topic reports substantive_row_count beside
         row_count and a topic of only such rows counts as empty: all empty is
-        NOT_FOUND, some empty is PARTIAL_COLLECTION. Fields OpenDART publishes
-        as bare numbers with a documented scale carry that scale in
-        field_units, so audit_service_contract's 감사보수 8,100 reads as
-        8,100백만원. Supported topics:
+        NOT_FOUND, some empty is PARTIAL_COLLECTION. Amount and hour fields carry
+        whatever unit the filer wrote in its own table, which differs between
+        filers and is sometimes inside the value ("54,000천원", "USD 280,000"):
+        OpenDART relays the text and states no scale, so read the unit from the
+        filing itself through get_report_sections rather than assuming one. Supported topics:
         audit_opinion (auditor
         name, audit opinion, emphasis-of-matter and key audit matters),
         audit_service_contract (audit fee and service contract),

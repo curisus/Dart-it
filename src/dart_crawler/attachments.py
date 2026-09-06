@@ -205,7 +205,9 @@ class AttachmentService:
                     WarningInfo(
                         code=WarningCode.FALLBACK_SOURCE_USED,
                         message="OpenDART 원문 ZIP 대신 DART 웹 문서를 사용했습니다.",
-                        details=_zip_warning_details(requested_zip_reason),
+                        details=_source_fallback_details(
+                            _zip_warning_details(requested_zip_reason)
+                        ),
                     ),
                 ),
                 next_action="DART 웹 문서 구조 변경 여부를 확인하세요.",
@@ -283,9 +285,11 @@ class AttachmentService:
                 WarningInfo(
                     code=WarningCode.FALLBACK_SOURCE_USED,
                     message="OpenDART 원문 ZIP 대신 DART 웹 문서를 사용했습니다.",
-                    details=_zip_warning_details(
-                        requested_zip_reason,
-                        source_reason,
+                    details=_source_fallback_details(
+                        _zip_warning_details(
+                            requested_zip_reason,
+                            source_reason,
+                        )
                     ),
                 ),
             ),
@@ -800,14 +804,23 @@ def _attachment_name(
     return f"{_EXTENDED_NAME_MARKER}{source_rcept_no}/{name}"
 
 
+def _source_fallback_details(details: JsonObject) -> JsonObject:
+    """Mark ZIP outcome details as the source-substitution fallback."""
+    return {FALLBACK_AXIS_KEY: FallbackAxis.SOURCE.value, **details}
+
+
 def _zip_warning_details(
     requested_reason: str | None,
     source_reason: str | None = None,
     *,
     source_rcept_nos: tuple[str, ...] = (),
 ) -> JsonObject:
-    """Build safe diagnostic details for ZIP fallback warnings."""
-    details: JsonObject = {FALLBACK_AXIS_KEY: FallbackAxis.SOURCE.value}
+    """Build safe diagnostic details describing one ZIP outcome.
+
+    Shared by warnings that are not fallbacks, so it never states an axis: only
+    the two FALLBACK_SOURCE_USED sites add one.
+    """
+    details: JsonObject = {}
     if requested_reason is not None:
         details["requested_zip_reason"] = requested_reason
     if source_reason is not None:

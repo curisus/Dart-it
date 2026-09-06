@@ -335,7 +335,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 | `parser` | 첨부가 엄격한 XML로 해석되지 않아 HTML 호환 파서를 썼습니다. OpenDART 첨부 대부분이 이 경로이므로 일상적인 알림입니다. |
 | `filename_date` | 본문에서 작성일을 찾지 못해 접수일자를 파일명에 썼습니다. 내용에는 영향이 없습니다. |
 
-`CORE_STATEMENT_MISSING`은 `export_report_excel`이 재무상태표·손익·자본변동표·현금흐름표 중 하나라도 없는 첨부를 받았을 때 파일을 만들지 않고 반환합니다. 다만 `list_report_attachments`가 노출하는 첨부는 별도·연결 감사보고서뿐이라 **도구 표면으로는 이 경로에 도달할 수 없고**, 동작은 단위 테스트로만 보증됩니다.
+`CORE_STATEMENT_MISSING`은 `export_report_excel`이 재무상태표·손익·자본변동표·현금흐름표 중 하나라도 없는 첨부를 받았을 때 파일을 만들지 않고 반환합니다. 다만 이 오류는 실제 공시에서 관측된 적이 없습니다 — 2026-09-06 검증(5개사·공시 15건)에서 0건이고, `list_report_attachments`가 노출하는 첨부는 별도·연결 감사보고서뿐이라 결측 첨부를 인자로 지정할 방법이 없었습니다. 따라서 이 경로의 동작은 사실상 단위 테스트로만 보증됩니다.
 
 </details>
 

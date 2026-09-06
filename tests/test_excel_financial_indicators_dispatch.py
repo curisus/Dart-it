@@ -42,6 +42,7 @@ def _data(rows: tuple[FinancialIndexRow, ...]) -> FinancialIndicatorData:
         reprt_code="11011",
         idx_cl_code="M210000",
         returned_row_count=len(rows),
+        empty_indicator_count=sum(1 for row in rows if not row.idx_val.strip()),
         indicators=rows,
     )
 

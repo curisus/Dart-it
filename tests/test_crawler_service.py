@@ -241,4 +241,6 @@ def test_each_discovery_step_points_at_the_next_one(
     assert listing.ok is True
     assert listing.next_action is not None
     assert "get_report_sections" in listing.next_action
-    assert "export_report_excel" in listing.next_action
+    # The remote surface registers no export tool, and both surfaces share this
+    # text, so it must never name one.
+    assert "export_report_excel" not in listing.next_action

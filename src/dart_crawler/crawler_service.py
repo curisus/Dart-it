@@ -77,9 +77,10 @@ _LIST_SECTIONS_NEXT_ACTION: Final = (
     "별도·연결 중 하나의 attachment_id로 "
     "list_report_sections(rcept_no, attachment_id)를 호출하세요."
 )
+# The remote surface has no export tools, and both surfaces share this text,
+# so it names only what a caller of either one can actually call next.
 _GET_SECTIONS_NEXT_ACTION: Final = (
-    "목차에서 고른 section_ids 또는 section_kinds로 get_report_sections를 "
-    "호출하세요. 원문 서식 그대로 Excel이 필요하면 export_report_excel을 쓰세요."
+    "목차에서 고른 section_ids 또는 section_kinds로 get_report_sections를 호출하세요."
 )
 
 

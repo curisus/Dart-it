@@ -244,11 +244,14 @@ def test_full_statements_ofs_not_found_has_no_cfs_hint() -> None:
     # When
     result = service.full_statements(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, "OFS")
 
-    # Then
+    # Then: the separate-statement retry is meaningless here, but the year and
+    # report code are still worth checking, so the caller is not left with none.
     assert result.ok is False
     assert result.error is not None
     assert result.error.code is ErrorCode.NOT_FOUND
-    assert result.next_action is None
+    assert result.next_action is not None
+    assert "OFS" not in result.next_action
+    assert "bsns_year" in result.next_action
 
 
 def test_full_statements_propagates_upstream_failure_unchanged() -> None:
@@ -546,7 +549,7 @@ def _index_row(name: str, value: str) -> FinancialIndexRow:
     )
 
 
-def test_indicators_returned_without_a_value_are_reported() -> None:
+def test_indicators_count_the_rows_opendart_left_without_a_value() -> None:
     """A blank idx_val reads as a collection failure once it reaches a sheet."""
     source = _IndicatorSource(
         (
@@ -560,22 +563,22 @@ def test_indicators_returned_without_a_value_are_reported() -> None:
     result = service.indicators(("00126380",), 2025, "11011", "M220000")
 
     assert result.ok is True
-    assert [warning.code for warning in result.warnings] == [
-        WarningCode.PARTIAL_COLLECTION
-    ]
-    details = result.warnings[0].details
-    assert details["empty_indicator_count"] == 2
-    assert details["empty_indicators"] == ["당좌비율", "이자보상배율"]
+    assert result.data is not None
+    assert result.data.returned_row_count == 3
+    assert result.data.empty_indicator_count == 2
 
 
-def test_indicators_with_every_value_present_warn_about_nothing() -> None:
-    source = _IndicatorSource((_index_row("부채비율", "45.6"),))
+def test_blank_indicator_values_are_not_warned_about() -> None:
+    """Several indicators are blank for every filer, so a warning would always fire."""
+    source = _IndicatorSource((_index_row("부채비율", ""),))
     service = FinancialsService(source)
 
     result = service.indicators(("00126380",), 2025, "11011", "M220000")
 
     assert result.ok is True
     assert result.warnings == ()
+    assert result.data is not None
+    assert result.data.empty_indicator_count == 1
 
 
 @dataclass(slots=True)
