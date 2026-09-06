@@ -13,7 +13,7 @@ which tool groups they register:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal, Protocol, TypeVar
+from typing import Protocol, TypeVar
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
@@ -87,13 +87,17 @@ def _register_document_tools(mcp: MCPServer, run: ServiceRunner) -> None:
     @mcp.tool()
     def list_report_filings(
         corp_code: str,
-        report_kind: Literal["audit", "half_year_review", "quarterly_review"],
+        report_kind: str,
         ctx: Context,
     ) -> Result[tuple[Filing, ...]]:
         """List recent five-year representative filings.
 
         report_kind selects the report family: audit (감사보고서),
         half_year_review (반기검토보고서), quarterly_review (분기검토보고서).
+        It is declared as a string rather than an enum on purpose: an enum
+        makes the MCP layer reject an unknown value with a protocol error,
+        and every failure of this server has to arrive as a Result envelope
+        carrying the supported values.
         """
         return run(
             ctx,

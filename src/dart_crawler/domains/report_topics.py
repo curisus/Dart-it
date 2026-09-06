@@ -41,7 +41,16 @@ _SPLIT_TOPICS_NEXT_ACTION: Final = "topic을 나누어 호출하세요."
 # Fields OpenDART echoes on every row, "해당 없음" rows included, so a row made
 # only of these says nothing about the topic that was asked for.
 _IDENTITY_FIELDS: Final[frozenset[str]] = frozenset(
-    {"corp_code", "corp_name", "rcept_no", "stlm_dt", "bsns_year", "reprt_code"}
+    {
+        "corp_code",
+        "corp_cls",
+        "corp_name",
+        "stock_code",
+        "rcept_no",
+        "stlm_dt",
+        "bsns_year",
+        "reprt_code",
+    }
 )
 _PLACEHOLDER: Final = "-"
 # DS002 returns audit fees and hours as bare numbers: 감사보수 8,100 is 81억원,

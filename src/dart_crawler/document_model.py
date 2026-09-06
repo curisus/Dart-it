@@ -38,9 +38,12 @@ _TITLE_TO_TABLE_SKIPPABLE: Final = frozenset({BlockKind.PARAGRAPH, BlockKind.IMA
 # cover the usual period/unit caption pair. A third is narrative drift, so a
 # later unrelated table cannot be claimed by the title.
 _MAX_PARAGRAPHS_WITH_IMAGE: Final = 2
-# A note heading is one line; the cap stops a paragraph that merely opens with
-# "3. " from becoming a table-of-contents entry the length of a paragraph.
-_MAX_NOTE_HEADING_CHARS: Final = 200
+# Filers write a note title on its own line, but some run the title and the
+# first sentence together as "1. 지배기업의 개요 및 보고주체 : 주식회사 ...".
+# The colon ends the title, and the cap bounds whatever is left when a filer
+# uses no colon either.
+_NOTE_HEADING_TERMINATORS: Final = (":", "\uff1a")
+_MAX_NOTE_HEADING_CHARS: Final = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,11 +314,14 @@ def _split_note_sections(
 def _note_heading(text: str, number: str) -> str | None:
     """Return the source note heading, or None when it is only the number.
 
-    A heading of "3." repeats what the "\uc8fc\uc11d 3" title already says, so it is
+    A heading of "3." repeats what the "주석 3" title already says, so it is
     dropped rather than published as a table-of-contents entry carrying nothing.
     """
     line = text.strip().splitlines()[0] if text.strip() else ""
-    heading = " ".join(line.split()).rstrip(":\uff1a").strip()
+    heading = " ".join(line.split())
+    for terminator in _NOTE_HEADING_TERMINATORS:
+        heading = heading.split(terminator, 1)[0]
+    heading = heading.strip()
     if heading in {number, f"{number}."}:
         return None
     return heading[:_MAX_NOTE_HEADING_CHARS]

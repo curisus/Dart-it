@@ -8,6 +8,7 @@ from typing import Protocol
 
 from dart_crawler.api_models import DartListRow
 from dart_crawler.domain import Filing, ReportKind, ReportPeriod
+from dart_crawler.domains.query_guards import GuardViolation
 from dart_crawler.result import ErrorCode, JsonObject, JsonValue, Result, error_info
 
 # One label per kind so an unknown value is answered the way every sibling tool
@@ -28,6 +29,29 @@ def supported_report_kinds() -> list[JsonValue]:
         {"key": kind.value, "label": label}
         for kind, label in _REPORT_KIND_LABELS.items()
     ]
+
+
+def validate_report_kind(report_kind: ReportKind | str) -> GuardViolation | None:
+    """Reject an unsupported report kind before any lookup runs.
+
+    Callers that resolve the company first would otherwise report the failure
+    as "company not found", because an unsupported kind makes the company
+    search itself return nothing.
+    """
+    try:
+        _ = ReportKind(report_kind)
+    except ValueError:
+        details: JsonObject = {"supported_report_kinds": supported_report_kinds()}
+        return GuardViolation(
+            error_info(
+                ErrorCode.INVALID_INPUT,
+                "report_kind가 지원 범위에 없습니다.",
+                retryable=False,
+                details=details,
+            ),
+            next_action=_SUPPORTED_REPORT_KINDS_NEXT_ACTION,
+        )
+    return None
 
 
 class FilingSource(Protocol):
@@ -69,19 +93,13 @@ class FilingService:
         report_kind: ReportKind | str,
         company_name_for: Callable[[DartListRow], str],
     ) -> Result[tuple[Filing, ...]]:
-        try:
-            parsed_kind = ReportKind(report_kind)
-        except ValueError:
-            details: JsonObject = {"supported_report_kinds": supported_report_kinds()}
+        violation = validate_report_kind(report_kind)
+        if violation is not None:
             return Result[tuple[Filing, ...]].failure(
-                error_info(
-                    ErrorCode.INVALID_INPUT,
-                    "report_kind가 지원 범위에 없습니다.",
-                    retryable=False,
-                    details=details,
-                ),
-                next_action=_SUPPORTED_REPORT_KINDS_NEXT_ACTION,
+                violation.error,
+                next_action=violation.next_action,
             )
+        parsed_kind = ReportKind(report_kind)
         source_result = self._source.list_disclosures(
             corp_code, _detail_type(parsed_kind)
         )

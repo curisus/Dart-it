@@ -40,7 +40,7 @@ from dart_crawler.domains.registration_statements import (
 from dart_crawler.domains.report_topics import ReportTopicData, ReportTopicService
 from dart_crawler.excel_export import ExcelExportService, ExportContext, ExportedFile
 from dart_crawler.fallback_axis import FALLBACK_AXIS_KEY, FallbackAxis
-from dart_crawler.filing_service import FilingService
+from dart_crawler.filing_service import FilingService, validate_report_kind
 from dart_crawler.http_client import HttpClient
 from dart_crawler.markdown_export import MarkdownExportedFile, MarkdownExportService
 from dart_crawler.query_limits import DEFAULT_QUERY_LIMITS, QueryLimits
@@ -225,6 +225,12 @@ class CrawlerService:
         report_kind: ReportKind | str,
     ) -> Result[tuple[Filing, ...]]:
         """List recent representative filings for one company code."""
+        violation = validate_report_kind(report_kind)
+        if violation is not None:
+            return Result.failure(
+                violation.error,
+                next_action=violation.next_action,
+            )
         company = self.search_companies(corp_code, report_kind)
         if not company.ok or not company.data:
             return Result.failure(

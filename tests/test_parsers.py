@@ -1076,3 +1076,25 @@ def test_a_parser_fallback_names_its_axis() -> None:
         "FALLBACK_SOURCE_USED"
     ]
     assert result.warnings[0].details["fallback_axis"] == "parser"
+
+
+def test_a_note_heading_ends_where_the_title_does() -> None:
+    """Some filers run the title and the first sentence into one paragraph."""
+    html = (
+        "<document>"
+        "<heading>주석</heading>"
+        "<p>1. 지배기업의 개요 및 보고주체 : 주식회사 KB금융지주는 "
+        "금융지주회사법에 따라 2008년 9월 29일 설립되었습니다.</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    notes = [
+        section
+        for section in result.data.sections
+        if section.title.startswith("주석 ")
+    ]
+    assert [section.heading for section in notes] == ["1. 지배기업의 개요 및 보고주체"]
