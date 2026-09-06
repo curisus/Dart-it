@@ -101,7 +101,7 @@ class ReportSectionData(BaseModel):    # get_report_sections 응답
     returned_cell_count: int; returned_text_char_count: int   # 목차와 같은 두 축
     sections: tuple[SectionData, ...]
 ```
-순수 함수: `section_id(index, kind)`, `summarize_sections(document)`, `select_sections(document, section_ids, section_kinds) -> Result[...]`. 섹션 데이터는 블록 전체(제목/문단/표/이미지) 포함 — 주석·감사의견은 서술문이 본체이므로.
+순수 함수: `section_id(index, kind)`, `summarize_sections(document)`, `validate_section_selectors(section_ids, section_kinds) -> GuardViolation | None`, `select_sections(document, section_ids, section_kinds) -> Result[...]`. 선택자 구문 검증은 `validate_section_selectors`에 있고 첨부 다운로드 **이전**에 호출한다 — 오타 하나에 OpenDART 원문 다운로드가 낭비되지 않도록. `select_sections`도 같은 함수를 최상단에서 호출해 단독 정합성을 유지한다. 섹션 데이터는 블록 전체(제목/문단/표/이미지) 포함 — 주석·감사의견은 서술문이 본체이므로.
 
 ### 6. 핵심 재무제표 게이트 — 데이터 도구는 경고로 완화
 

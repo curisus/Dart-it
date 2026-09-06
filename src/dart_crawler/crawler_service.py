@@ -59,6 +59,7 @@ from dart_crawler.section_models import (
     returned_text_char_count,
     select_sections,
     summarize_sections,
+    validate_section_selectors,
 )
 
 PARSER_VERSION: Final = "0.1.0"
@@ -370,6 +371,12 @@ class CrawlerService:
         section_kinds: tuple[str, ...] = (),
     ) -> Result[ReportSectionData]:
         """Return every block of the sections named by identifier or by kind."""
+        violation = validate_section_selectors(section_ids, section_kinds)
+        if violation is not None:
+            return Result.failure(
+                violation.error,
+                next_action=violation.next_action,
+            )
         loaded = self._validated_document(rcept_no, attachment_id)
         if not loaded.ok or loaded.data is None:
             return Result.failure(

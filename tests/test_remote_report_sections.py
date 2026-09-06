@@ -187,3 +187,48 @@ def test_section_tools_refuse_data_that_failed_document_validation(
         assert result.data is None
         assert result.error is not None
         assert result.error.code is ErrorCode.VALIDATION_FAILED
+
+
+def _network_rejecting_service() -> CrawlerService:
+    return CrawlerService(SecretStr("test-key"), NetworkRejectingHttpClient())
+
+
+def test_get_report_sections_rejects_an_unknown_kind_before_downloading() -> None:
+    """A typo costs one OpenDART download and about two seconds otherwise."""
+    result = _network_rejecting_service().get_report_sections(
+        RCEPT_NO,
+        ATTACHMENT_ID,
+        section_kinds=("footnote",),
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.error.details["unknown_section_kinds"] == ["footnote"]
+    assert result.warnings == ()
+
+
+def test_get_report_sections_rejects_a_malformed_id_before_downloading() -> None:
+    result = _network_rejecting_service().get_report_sections(
+        RCEPT_NO,
+        ATTACHMENT_ID,
+        section_ids=("note-3",),
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.error.details["invalid_section_ids"] == ["note-3"]
+    assert result.warnings == ()
+
+
+def test_get_report_sections_rejects_an_empty_selection_before_downloading() -> None:
+    result = _network_rejecting_service().get_report_sections(
+        RCEPT_NO,
+        ATTACHMENT_ID,
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.next_action is not None
