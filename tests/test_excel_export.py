@@ -475,3 +475,81 @@ def test_export_rejects_document_without_source_coverage(tmp_path: Path) -> None
     assert result.error.code.value == "VALIDATION_FAILED"
     assert result.error.details["issue"] == "source_coverage_missing"
     assert list(tmp_path.glob("*.xlsx")) == []
+
+
+def test_export_records_note_number_to_heading_map(tmp_path: Path) -> None:
+    """Sheet tabs cannot hold the source title, so the workbook carries the map."""
+    document = _parse_document(
+        "<document>"
+        "<heading>재무상태표</heading>"
+        "<table><tr><td>자산</td><td>1,000</td></tr></table>"
+        "<heading>손익 및 포괄손익계산서</heading>"
+        "<table><tr><td>매출</td><td>(10)</td></tr></table>"
+        "<heading>자본변동표</heading>"
+        "<table><tr><td>자본</td><td>5</td></tr></table>"
+        "<heading>현금흐름표</heading>"
+        "<table><tr><td>현금</td><td>6</td></tr></table>"
+        "<heading>주석</heading>"
+        "<p>28. 재무위험관리</p>"
+        "<table><tr><td>위험</td><td>7</td></tr></table>"
+        "</document>"
+    )
+
+    result = ExcelExportService(tmp_path).export(_context(document))
+
+    assert result.ok is True
+    assert result.data is not None
+    workbook = load_workbook(result.data.output_path)
+    metadata = {
+        str(row[0].value): str(row[1].value)
+        for row in workbook["수집정보"].iter_rows(min_col=1, max_col=2)
+        if row[0].value is not None and row[1].value is not None
+    }
+    assert metadata["note_headings"] == "주석 28=28. 재무위험관리"
+    assert "주석 28" in workbook.sheetnames
+    workbook.close()
+
+
+def test_note_heading_map_names_the_sheet_that_holds_each_heading(
+    tmp_path: Path,
+) -> None:
+    """A repeated note number becomes 주석 3_2, and the map must say so."""
+    document = _parse_document(
+        "<document>"
+        "<heading>재무상태표</heading>"
+        "<table><tr><td>자산</td><td>1,000</td></tr></table>"
+        "<heading>손익 및 포괄손익계산서</heading>"
+        "<table><tr><td>매출</td><td>(10)</td></tr></table>"
+        "<heading>자본변동표</heading>"
+        "<table><tr><td>자본</td><td>5</td></tr></table>"
+        "<heading>현금흐름표</heading>"
+        "<table><tr><td>현금</td><td>6</td></tr></table>"
+        "<heading>주석</heading>"
+        "<p>3. 금융상품</p>"
+        "<table><tr><td>가</td><td>7</td></tr></table>"
+        "<p>3. 중요한 회계추정</p>"
+        "<table><tr><td>나</td><td>8</td></tr></table>"
+        "</document>"
+    )
+
+    result = ExcelExportService(tmp_path).export(_context(document))
+
+    assert result.ok is True
+    assert result.data is not None
+    workbook = load_workbook(result.data.output_path)
+    try:
+        metadata = {
+            str(row[0].value): str(row[1].value)
+            for row in workbook["수집정보"].iter_rows(min_col=1, max_col=2)
+            if row[0].value is not None and row[1].value is not None
+        }
+        assert metadata["note_headings"] == (
+            "주석 3=3. 금융상품 | 주석 3_2=3. 중요한 회계추정"
+        )
+        for sheet_name, heading in (
+            ("주석 3", "3. 금융상품"),
+            ("주석 3_2", "3. 중요한 회계추정"),
+        ):
+            assert workbook[sheet_name]["A1"].value == heading
+    finally:
+        workbook.close()

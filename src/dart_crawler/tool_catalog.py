@@ -118,6 +118,10 @@ def _register_document_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         Each entry carries the section_id, title, kind, and cell count needed to
         choose what to request from get_report_sections, without returning any
         of the section content.
+
+        Note titles are normalized to "주석 N" so they fit a worksheet name;
+        the heading field keeps the source line ("28. 재무위험관리") so one note
+        can be selected without requesting every note to search them.
         """
         return run(
             ctx,

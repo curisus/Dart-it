@@ -975,3 +975,93 @@ def test_statement_title_opens_sections_with_bounded_gap_before_image() -> None:
             section.kind is SectionKind.BALANCE_SHEET
             for section in result.data.sections
         )
+
+
+def test_note_sections_keep_their_original_heading_text() -> None:
+    """The number-only title cannot tell a reader which note to request."""
+    html = (
+        "<document>"
+        "<heading>주석</heading>"
+        "<p> 1. 일반사항</p>"
+        "<p>내용</p>"
+        "<p> 28. 재무위험관리:</p>"
+        "<p>내용</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    headings = {
+        section.title: section.heading
+        for section in result.data.sections
+        if section.title.startswith("주석 ")
+    }
+    assert headings == {"주석 1": "1. 일반사항", "주석 28": "28. 재무위험관리"}
+
+
+def test_non_note_sections_have_no_separate_heading() -> None:
+    html = (
+        "<document>"
+        "<heading>재무상태표</heading>"
+        "<table><tr><td>자산총계</td><td>1,000</td></tr></table>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    assert all(section.heading is None for section in result.data.sections)
+
+
+def test_a_bare_note_number_produces_no_heading() -> None:
+    """"3." repeats the "주석 3" title and identifies nothing on its own."""
+    html = (
+        "<document>"
+        "<heading>주석</heading>"
+        "<p>3. :</p>"
+        "<p>내용</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    notes = [
+        section
+        for section in result.data.sections
+        if section.title.startswith("주석 ")
+    ]
+    assert [section.title for section in notes] == ["주석 3"]
+    assert notes[0].heading is None
+
+
+def test_a_repeated_note_number_keeps_each_heading_with_its_own_section() -> None:
+    """Filers number a note's sub-items 1., 2., 3. and then resume the notes."""
+    html = (
+        "<document>"
+        "<heading>주석</heading>"
+        "<p>2. 중요한 회계정책</p>"
+        "<p>3. 금융상품</p>"
+        "<p>3. 중요한 회계추정</p>"
+        "<p>내용</p>"
+        "</document>"
+    ).encode()
+
+    result = parse_html_document(html)
+
+    assert result.ok is True
+    assert result.data is not None
+    notes = [
+        (section.title, section.heading)
+        for section in result.data.sections
+        if section.title.startswith("주석 ")
+    ]
+    assert notes == [
+        ("주석 2", "2. 중요한 회계정책"),
+        ("주석 3", "3. 금융상품"),
+        ("주석 3", "3. 중요한 회계추정"),
+    ]

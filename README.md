@@ -236,7 +236,7 @@ codex mcp add dart_local --env DART_MCP_PROJECT_DIR=C:\dart_mcp_workspace -- uvx
 | 회사·공시 | `search_companies` | `company_query`, 선택적 `report_kind` | `report_kind`를 생략하거나 `null`로 두면 OpenDART 회사코드 전체에서 최대 5개를 순위화합니다(시장구분은 `null`). 지정하면 `audit`, `quarterly_review`, `half_year_review` 공시가 있는 회사만 찾습니다. |
 | 회사·공시 | `list_report_filings` | `corp_code`, `report_kind` | 최근 5개 사업연도의 대표 공시를 반환합니다. 정정 계열은 묶고 철회된 공시는 제외합니다. |
 | 회사·공시 | `list_report_attachments` | `rcept_no` | 선택 가능한 별도·연결 첨부를 반환합니다. 식별자는 `opendart:접수번호:파일명` 또는 `viewer:접수번호:dcmNo` 형식입니다. |
-| 첨부 원문 | `list_report_sections` | `rcept_no`, `attachment_id` | 첨부문서의 목차를 내용 없이 반환합니다. 각 항목에는 `section_id`, 제목, 종류, 블록·표·셀·텍스트 수, 이미지 포함 여부가 들어갑니다. |
+| 첨부 원문 | `list_report_sections` | `rcept_no`, `attachment_id` | 첨부문서의 목차를 내용 없이 반환합니다. 각 항목에는 `section_id`, 제목, `heading`, 종류, 블록·표·셀·텍스트 수, 이미지 포함 여부가 들어갑니다. 주석 제목은 워크시트 이름 길이 제한 때문에 `주석 N`으로 정규화되며, `heading`이 원문 제목(`28. 재무위험관리`)을 보존하므로 주석 전량을 받지 않고 목차만으로 필요한 주석을 고를 수 있습니다. 다른 구역의 `heading`은 `null`입니다. |
 | 첨부 원문 | `get_report_sections` | `rcept_no`, `attachment_id`, `section_ids`, `section_kinds` | 선택한 구역의 문단과 표를 원문 순서로 반환합니다. 식별자 또는 종류 중 하나 이상이 필요하고, 둘 다 주면 합집합을 반환합니다. `statements`는 핵심 재무제표 4종을 뜻합니다. |
 | 공식 재무정보 | `get_financial_statements` | `corp_code`, `bsns_year`, `reprt_code`, `fs_div` | 한 회사·한 기간의 공식 계정과목 전체를 반환합니다. `fs_div`는 기본 `CFS`(연결) 또는 `OFS`(별도)입니다. 금액은 OpenDART 원문 문자열로 유지합니다. |
 | 공식 재무정보 | `get_major_accounts` | `corp_codes`, `bsns_year`, `reprt_code` | 최대 100개 회사의 주요 재무상태표·손익계산서 계정을 한 번에 반환합니다. |

@@ -625,3 +625,27 @@ def test_missing_core_sections_ignores_a_statement_section_without_a_table() -> 
     )
 
     assert "재무상태표" in missing_core_sections(document)
+
+
+def test_summarize_sections_carries_the_source_note_heading() -> None:
+    document = _document(
+        (
+            DocumentSection(
+                title="주석 28",
+                kind=SectionKind.NOTE,
+                blocks=(DocumentBlock(BlockKind.PARAGRAPH, text="28. 재무위험관리"),),
+                heading="28. 재무위험관리",
+            ),
+            DocumentSection(
+                title="재무상태표",
+                kind=SectionKind.BALANCE_SHEET,
+                blocks=(DocumentBlock(BlockKind.TABLE, rows=(("자산", "1"),)),),
+            ),
+        ),
+        coverage=_coverage(),
+    )
+
+    summaries = summarize_sections(document)
+
+    assert [summary.heading for summary in summaries] == ["28. 재무위험관리", None]
+    assert [summary.title for summary in summaries] == ["주석 28", "재무상태표"]

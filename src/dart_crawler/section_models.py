@@ -68,12 +68,18 @@ class SectionSummary(BaseModel):
     everything else: it is the character count of the text carried by the
     headings, paragraphs, and images, and deliberately excludes table cells so
     that the two numbers never charge the same content twice.
+
+    ``heading`` is the source line a normalized title was derived from. Note
+    titles collapse to "주석 N" because a worksheet name may not exceed 31
+    characters, so the heading is what lets a caller pick one note instead of
+    requesting every note to search them.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     section_id: str
     title: str
+    heading: str | None = None
     kind: SectionKind
     block_count: int
     table_count: int
@@ -141,6 +147,7 @@ def summarize_sections(document: ParsedDocument) -> tuple[SectionSummary, ...]:
         SectionSummary(
             section_id=section_id(index, section.kind),
             title=section.title,
+            heading=section.heading,
             kind=section.kind,
             block_count=len(section.blocks),
             table_count=sum(

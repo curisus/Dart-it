@@ -81,7 +81,9 @@ class SectionBlock(BaseModel):
     kind: BlockKind; text: str = ""; table: TableData | None = None; image_source: str | None = None
 
 class SectionSummary(BaseModel):
-    section_id: str; title: str; kind: SectionKind
+    section_id: str; title: str
+    heading: str | None = None                 # 주석 원제목("28. 재무위험관리"), 그 외 None
+    kind: SectionKind
     block_count: int; table_count: int
     cell_count: int; text_char_count: int      # 표 / 표 밖 서술, 서로 겹치지 않음
     has_image: bool

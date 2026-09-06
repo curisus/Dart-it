@@ -38,6 +38,9 @@ _TITLE_TO_TABLE_SKIPPABLE: Final = frozenset({BlockKind.PARAGRAPH, BlockKind.IMA
 # cover the usual period/unit caption pair. A third is narrative drift, so a
 # later unrelated table cannot be claimed by the title.
 _MAX_PARAGRAPHS_WITH_IMAGE: Final = 2
+# A note heading is one line; the cap stops a paragraph that merely opens with
+# "3. " from becoming a table-of-contents entry the length of a paragraph.
+_MAX_NOTE_HEADING_CHARS: Final = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,11 +56,18 @@ class DocumentBlock:
 
 @dataclass(frozen=True, slots=True)
 class DocumentSection:
-    """A source-order section that becomes one workbook sheet."""
+    """A source-order section that becomes one workbook sheet.
+
+    ``title`` is the sheet-safe name, which for notes is normalized down to
+    "주석 N". ``heading`` keeps the source line that name was derived from so a
+    caller can tell which note to ask for without downloading them all; it is
+    ``None`` wherever the title is already the source heading.
+    """
 
     title: str
     kind: SectionKind
     blocks: tuple[DocumentBlock, ...]
+    heading: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +274,7 @@ def _split_note_sections(
             result.append(section)
             continue
         current_title = section.title
+        current_heading = section.heading
         current_blocks: list[DocumentBlock] = []
         for block in section.blocks:
             text = block.text if block.kind is not BlockKind.TABLE else ""
@@ -275,9 +286,14 @@ def _split_note_sections(
                             title=current_title,
                             kind=SectionKind.NOTE,
                             blocks=tuple(current_blocks),
+                            heading=current_heading,
                         )
                     )
                 current_title = f"주석 {match.group(1)}"
+                # The block stays in the section untouched; only a copy of its
+                # text is carried alongside, so source-coverage counts are
+                # unaffected by exposing the heading.
+                current_heading = _note_heading(text, match.group(1))
                 current_blocks = []
             current_blocks.append(block)
         if current_blocks:
@@ -286,6 +302,20 @@ def _split_note_sections(
                     title=current_title,
                     kind=SectionKind.NOTE,
                     blocks=tuple(current_blocks),
+                    heading=current_heading,
                 )
             )
     return result
+
+
+def _note_heading(text: str, number: str) -> str | None:
+    """Return the source note heading, or None when it is only the number.
+
+    A heading of "3." repeats what the "\uc8fc\uc11d 3" title already says, so it is
+    dropped rather than published as a table-of-contents entry carrying nothing.
+    """
+    line = text.strip().splitlines()[0] if text.strip() else ""
+    heading = " ".join(line.split()).rstrip(":\uff1a").strip()
+    if heading in {number, f"{number}."}:
+        return None
+    return heading[:_MAX_NOTE_HEADING_CHARS]

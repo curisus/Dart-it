@@ -72,6 +72,7 @@ def test_list_report_sections_preserves_section_order_and_provenance() -> None:
         "coverage_complete",
         "section_id",
         "title",
+        "heading",
         "kind",
         "block_count",
         "table_count",
