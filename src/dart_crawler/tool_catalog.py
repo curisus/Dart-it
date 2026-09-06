@@ -259,7 +259,11 @@ def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         stock ticker). reprt_code selects the filing: 11011 annual, 11012
         half-year, 11013 Q1, 11014 Q3. Data covers fiscal year 2015 onward.
         Up to ten topics per call; each topic's rows are returned verbatim
-        with every source field. Supported topics: audit_opinion (auditor
+        with every source field. OpenDART answers "해당 없음" with one row whose
+        fields are all "-", so each topic reports substantive_row_count beside
+        row_count and a topic of only such rows counts as empty: all empty is
+        NOT_FOUND, some empty is PARTIAL_COLLECTION. Supported topics:
+        audit_opinion (auditor
         name, audit opinion, emphasis-of-matter and key audit matters),
         audit_service_contract (audit fee and service contract),
         non_audit_service_contract (non-audit service contracts with the
