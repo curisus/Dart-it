@@ -362,7 +362,9 @@ def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         get_ownership_reports, DART's own DS005 endpoints demand this range
         rather than answering an unbounded history. Up to ten event_types
         per call; each type's rows are returned verbatim with every source
-        field, in request order. Supported event_types, grouped for
+        field, in request order. DS005 rows carry no receipt-date field of
+        their own; the receipt date is the first eight digits of rcept_no
+        (20260310002820 was filed on 2026-03-10). Supported event_types, grouped for
         reference (an unknown value fails with the full list in its error
         details' supported_event_types):
         distress — bankruptcy, business_suspension, rehabilitation_filing,
