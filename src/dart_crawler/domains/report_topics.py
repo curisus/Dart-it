@@ -44,6 +44,17 @@ _IDENTITY_FIELDS: Final[frozenset[str]] = frozenset(
     {"corp_code", "corp_name", "rcept_no", "stlm_dt", "bsns_year", "reprt_code"}
 )
 _PLACEHOLDER: Final = "-"
+# DS002 returns audit fees and hours as bare numbers: 감사보수 8,100 is 81억원,
+# not 8,100원. OpenDART publishes the unit in its field documentation rather
+# than in the payload, and the endpoint answers JSON with no table header to
+# read it from, so the documented unit is carried alongside the rows. The
+# filing itself remains authoritative if a filer states a different unit.
+_TOPIC_FIELD_UNITS: Final[Mapping[str, Mapping[str, str]]] = {
+    "audit_service_contract": {
+        "adt_cntrct_dtls_mendng": "백만원",
+        "adt_cntrct_dtls_time": "시간",
+    },
+}
 
 # One DS002 key-information topic: an endpoint behind a stable name. Kept as
 # an alias (rather than its own dataclass) now that domains/registry.py owns
@@ -193,6 +204,10 @@ class ReportTopicRows(BaseModel):
     the rows that actually say something: "해당 없음" arrives as one row whose
     every field outside the identifiers is "-", and counting that as data hid
     the empty-topic answers this service is supposed to give.
+
+    ``field_units`` names the unit of any field OpenDART returns as a bare
+    number whose scale is documented rather than sent, so 감사보수 8,100 is not
+    read as 8,100원.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -201,6 +216,7 @@ class ReportTopicRows(BaseModel):
     label: str
     row_count: int
     substantive_row_count: int
+    field_units: Mapping[str, str] = {}
     rows: tuple[JsonObject, ...]
 
 
@@ -288,6 +304,7 @@ class ReportTopicService:
                     label=topic.label,
                     row_count=len(rows),
                     substantive_row_count=substantive_row_count,
+                    field_units=_TOPIC_FIELD_UNITS.get(topic.key, {}),
                     rows=rows,
                 )
             )

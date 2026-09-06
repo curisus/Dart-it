@@ -266,7 +266,10 @@ def _register_disclosure_tools(mcp: MCPServer, run: ServiceRunner) -> None:
         with every source field. OpenDART answers "해당 없음" with one row whose
         fields are all "-", so each topic reports substantive_row_count beside
         row_count and a topic of only such rows counts as empty: all empty is
-        NOT_FOUND, some empty is PARTIAL_COLLECTION. Supported topics:
+        NOT_FOUND, some empty is PARTIAL_COLLECTION. Fields OpenDART publishes
+        as bare numbers with a documented scale carry that scale in
+        field_units, so audit_service_contract's 감사보수 8,100 reads as
+        8,100백만원. Supported topics:
         audit_opinion (auditor
         name, audit opinion, emphasis-of-matter and key audit matters),
         audit_service_contract (audit fee and service contract),

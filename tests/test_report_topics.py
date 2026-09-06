@@ -712,3 +712,45 @@ def test_the_source_row_is_still_returned_verbatim() -> None:
     assert result.data is not None
     assert result.data.topics[1].rows == (placeholder,)
     assert result.data.returned_row_count == 2
+
+
+def test_audit_fee_and_hour_fields_carry_their_documented_units() -> None:
+    """DS002 sends 8,100 for a fee of 81억원 and never says which unit it is."""
+    source = RecordingReportTopicSource(
+        results={
+            _AUDIT_SERVICE_ENDPOINT: Result.success(
+                (
+                    _topic_row(
+                        adt_cntrct_dtls_mendng="8,100",
+                        adt_cntrct_dtls_time="81,000",
+                    ),
+                )
+            ),
+        }
+    )
+    service = ReportTopicService(source)
+
+    result = service.get(
+        _CORP_CODE,
+        _BSNS_YEAR,
+        _REPRT_CODE,
+        ("audit_service_contract",),
+    )
+
+    assert result.data is not None
+    assert dict(result.data.topics[0].field_units) == {
+        "adt_cntrct_dtls_mendng": "백만원",
+        "adt_cntrct_dtls_time": "시간",
+    }
+
+
+def test_a_topic_without_documented_units_reports_none() -> None:
+    source = RecordingReportTopicSource(
+        results={_AUDIT_OPINION_ENDPOINT: Result.success((_topic_row(),))}
+    )
+    service = ReportTopicService(source)
+
+    result = service.get(_CORP_CODE, _BSNS_YEAR, _REPRT_CODE, ("audit_opinion",))
+
+    assert result.data is not None
+    assert dict(result.data.topics[0].field_units) == {}
