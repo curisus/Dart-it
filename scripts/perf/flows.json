@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "description": "Latency harness flows. Placeholders are strings of the exact form {name}: name, corp_code, rcept_no, attachment_id (from flows_resolved.json), bsns_year, reprt_code, report_kind. Flows run in this order within one company x rep. output_dir: 'fresh' = a new empty dir per company x rep, 'reuse:<flow>' = that flow's dir of the same company x rep. loader = the remote reference loader writes every page's rows to xlsx. companies[].expected pins each company's FY audit filing and separate (별도) attachment, cross-checked against OpenDART list.json on 2026-09-28; resolve, run and ab refuse any disagreement.",
+  "business_year": 2025,
+  "reprt_code": "11011",
+  "report_kind": "audit",
+  "companies": [
+    {
+      "corp_code": "00126380",
+      "name": "삼성전자",
+      "expected": {
+        "rcept_no": "20260310002820",
+        "attachment_id": "opendart:20260310002820:20260310002820_00760.xml"
+      }
+    },
+    {
+      "corp_code": "00164779",
+      "name": "SK하이닉스",
+      "expected": {
+        "rcept_no": "20260317000635",
+        "attachment_id": "opendart:20260317000635:20260317000635_00760.xml"
+      }
+    },
+    {
+      "corp_code": "00688996",
+      "name": "KB금융",
+      "expected": {
+        "rcept_no": "20260619000667",
+        "attachment_id": "opendart:20260619000667:/20260313001191/20260313001191_00760.xml"
+      }
+    },
+    {
+      "corp_code": "00877059",
+      "name": "삼성바이오로직스",
+      "expected": {
+        "rcept_no": "20260515001658",
+        "attachment_id": "opendart:20260515001658:/20260312001119/20260312001119_00760.xml"
+      }
+    },
+    {
+      "corp_code": "00266961",
+      "name": "NAVER",
+      "expected": {
+        "rcept_no": "20260313001021",
+        "attachment_id": "opendart:20260313001021:20260313001021_00760.xml"
+      }
+    }
+  ],
+  "flows": [
+    {
+      "id": "L-A",
+      "surface": "local",
+      "representative": true,
+      "output_dir": "fresh",
+      "steps": [
+        {"step": "search", "tool": "search_companies", "args": {"company_query": "{name}", "report_kind": "{report_kind}"}, "verify": ["corp_code"]},
+        {"step": "filings", "tool": "list_report_filings", "args": {"corp_code": "{corp_code}", "report_kind": "{report_kind}"}, "verify": ["rcept_no"]},
+        {"step": "attachments", "tool": "list_report_attachments", "args": {"rcept_no": "{rcept_no}"}, "verify": ["attachment_id"]},
+        {"step": "export", "tool": "export_report_excel", "args": {"rcept_no": "{rcept_no}", "attachment_id": "{attachment_id}"}, "verify": ["output_file"]}
+      ]
+    },
+    {
+      "id": "L-B",
+      "surface": "local",
+      "output_dir": "reuse:L-A",
+      "steps": [
+        {"step": "export", "tool": "export_report_excel", "args": {"rcept_no": "{rcept_no}", "attachment_id": "{attachment_id}"}, "verify": ["output_file"], "expect_warnings": ["EXISTING_FILE_REUSED"]}
+      ]
+    },
+    {
+      "id": "L-C",
+      "surface": "local",
+      "output_dir": "fresh",
+      "steps": [
+        {"step": "search", "tool": "search_companies", "args": {"company_query": "{name}"}, "verify": ["corp_code"]},
+        {"step": "export", "tool": "export_query_excel", "args": {"request": {"domain": "get_financial_statements", "arguments": {"corp_code": "{corp_code}", "bsns_year": "{bsns_year}", "reprt_code": "{reprt_code}", "fs_div": "CFS"}}}, "verify": ["output_file"]}
+      ]
+    },
+    {
+      "id": "L-D",
+      "surface": "local",
+      "output_dir": "fresh",
+      "companies": ["00126380"],
+      "steps": [
+        {"step": "export", "tool": "export_query_excel", "args": {"request": {"domain": "get_ownership_reports", "arguments": {"corp_code": "{corp_code}", "report_type": "insider_ownership"}}}, "verify": ["output_file"]}
+      ]
+    },
+    {
+      "id": "R-A",
+      "surface": "remote",
+      "representative": true,
+      "loader": true,
+      "steps": [
+        {"step": "search", "tool": "search_companies", "args": {"company_query": "{name}", "report_kind": "{report_kind}"}, "verify": ["corp_code"]},
+        {"step": "filings", "tool": "list_report_filings", "args": {"corp_code": "{corp_code}", "report_kind": "{report_kind}"}, "verify": ["rcept_no"]},
+        {"step": "attachments", "tool": "list_report_attachments", "args": {"rcept_no": "{rcept_no}"}, "verify": ["attachment_id"]},
+        {"step": "sections", "tool": "list_report_sections", "args": {"rcept_no": "{rcept_no}", "attachment_id": "{attachment_id}"}, "verify": ["ids"]},
+        {"step": "load", "tool": "load_excel_page", "follow_cursor": true, "args": {"request": {"domain": "get_report_sections", "arguments": {"rcept_no": "{rcept_no}", "attachment_id": "{attachment_id}", "section_kinds": ["statements", "note"]}, "page_size": 1000, "cursor": null}}, "verify": ["page"]}
+      ]
+    },
+    {
+      "id": "R-B",
+      "surface": "remote",
+      "loader": true,
+      "steps": [
+        {"step": "search", "tool": "search_companies", "args": {"company_query": "{name}"}, "verify": ["corp_code"]},
+        {"step": "load", "tool": "load_excel_page", "follow_cursor": true, "args": {"request": {"domain": "get_financial_statements", "arguments": {"corp_code": "{corp_code}", "bsns_year": "{bsns_year}", "reprt_code": "{reprt_code}", "fs_div": "CFS"}, "page_size": 1000, "cursor": null}}, "verify": ["page"]}
+      ]
+    },
+    {
+      "id": "R-C",
+      "surface": "remote",
+      "loader": true,
+      "companies": ["00126380"],
+      "steps": [
+        {"step": "load", "tool": "load_excel_page", "follow_cursor": true, "args": {"request": {"domain": "get_ownership_reports", "arguments": {"corp_code": "{corp_code}", "report_type": "insider_ownership"}, "page_size": 1000, "cursor": null}}, "verify": ["page"]}
+      ]
+    }
+  ]
+}
