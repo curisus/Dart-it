@@ -63,8 +63,9 @@ def test_windows_junction_output_root_is_rejected(tmp_path: Path) -> None:
             str(target),
         ],
         check=True,
+        # mklink prints in the console code page (e.g. CP949), so keep bytes
+        # rather than decoding under PYTHONUTF8.
         capture_output=True,
-        text=True,
     )
     assert completed.returncode == 0
     try:
