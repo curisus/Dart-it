@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType
-from typing import Final
+from typing import Final, Protocol
 
 import openpyxl
 import pytest
@@ -579,12 +579,19 @@ def _write_run(
     *,
     target: str = "local",
     code_root: str | None = None,
+    planned: list[tuple[str, str, int]] | None = None,
 ) -> Path:
     run_dir.mkdir(parents=True)
     (run_dir / "flows.jsonl").write_text(
         "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
     )
-    env = {"target": target, "sessions": [{"code_root": code_root}]}
+    session: dict[str, object] = {"code_root": code_root}
+    if planned is not None:
+        session["planned_samples"] = [
+            {"flow": flow, "corp_code": corp_code, "rep": rep}
+            for flow, corp_code, rep in planned
+        ]
+    env = {"target": target, "sessions": [session]}
     (run_dir / "env.json").write_text(json.dumps(env), encoding="utf-8")
     return run_dir
 
@@ -595,12 +602,15 @@ def _write_ab(
     new: list[dict[str, object]],
     *,
     arm_roots: tuple[str, str] | None = None,
+    ab_fields: dict[str, object] | None = None,
 ) -> Path:
     projects = {"A": str(root / "tree_a"), "B": str(root / "tree_b")}
     roots = arm_roots or (projects["A"], projects["B"])
     _write_run(root / "A", base, code_root=roots[0])
     _write_run(root / "B", new, code_root=roots[1])
-    (root / "ab.json").write_text(json.dumps({"projects": projects}), encoding="utf-8")
+    (root / "ab.json").write_text(
+        json.dumps({"projects": projects, **(ab_fields or {})}), encoding="utf-8"
+    )
     return root
 
 
@@ -843,3 +853,437 @@ def test_every_company_is_pinned_and_a_disagreeing_resolved_file_is_refused(
     )
     with pytest.raises(harness.HarnessError, match=changed.corp_code):
         harness.check_resolved_pins(catalog, pinned)
+
+
+def test_ab_block_schedule_alternates_the_first_arm_per_block(
+    harness: ModuleType,
+) -> None:
+    assert harness.ab_block_schedule(4) == [
+        (1, "A"),
+        (1, "B"),
+        (2, "B"),
+        (2, "A"),
+        (3, "A"),
+        (3, "B"),
+        (4, "B"),
+        (4, "A"),
+    ]
+
+
+def test_ab_jobs_run_every_company_per_block_and_one_company_per_rep(
+    harness: ModuleType,
+) -> None:
+    companies = ("c1", "c2", "c3")
+    assert harness.ab_jobs(list(companies), 2, "block") == [
+        (companies, 1, "A"),
+        (companies, 1, "B"),
+        (companies, 2, "B"),
+        (companies, 2, "A"),
+    ]
+    assert harness.ab_jobs(["c1", "c2"], 2, "rep") == [
+        ((corp_code,), rep, arm)
+        for corp_code, rep, arm in harness.ab_schedule(["c1", "c2"], 2)
+    ]
+
+
+def test_ab_block_child_runs_all_companies_for_one_rep(
+    harness: ModuleType, tmp_path: Path
+) -> None:
+    namespace = harness.build_parser().parse_args(
+        [
+            "ab",
+            "--target",
+            "local",
+            "--flows",
+            "L-A",
+            "--run-id",
+            "R",
+            "--a-project",
+            str(tmp_path),
+            "--b-project",
+            str(tmp_path),
+            "--session-scope",
+            "block",
+        ]
+    )
+    command = harness._ab_command_line(
+        "uv",
+        tmp_path,
+        namespace,
+        corp_codes=("c1", "c2"),
+        rep=2,
+        arm="B",
+        budget=10,
+        resolved=tmp_path / "resolved.json",
+    )
+    assert namespace.session_scope == "block"
+    assert command[command.index("--companies") + 1] == "c1,c2"
+    assert command[command.index("--reps") + 1] == "1"
+    assert command[command.index("--rep-offset") + 1] == "1"
+    default = harness.build_parser().parse_args(
+        [
+            "ab",
+            "--target",
+            "local",
+            "--flows",
+            "L-A",
+            "--run-id",
+            "R",
+            "--a-project",
+            "a",
+            "--b-project",
+            "b",
+        ]
+    )
+    assert default.session_scope == "rep"
+
+
+# ---------------------------------------------------------------- planned samples
+
+
+def _catalog_codes(harness: ModuleType) -> list[str]:
+    return [company.corp_code for company in harness.load_catalog().companies]
+
+
+def _ab_fields(
+    harness: ModuleType,
+    *,
+    scope: str,
+    reps: int,
+    flows: str = "L-A",
+    failing: frozenset[int] = frozenset(),
+) -> dict[str, object]:
+    """ab.json's plan and children; the children at ``failing`` positions exit 1."""
+    codes = _catalog_codes(harness)
+    children: list[dict[str, object]] = []
+    for position, (corp_codes, rep, arm) in enumerate(
+        harness.ab_jobs(codes, reps, scope), start=1
+    ):
+        companies: dict[str, object] = (
+            {"corp_codes": list(corp_codes)}
+            if scope == "block"
+            else {"corp_code": corp_codes[0]}
+        )
+        children.append(
+            {
+                "position": position,
+                **companies,
+                "rep": rep,
+                "arm": arm,
+                "exit_code": 1 if position in failing else 0,
+            }
+        )
+    return {
+        "target": "local",
+        "flows": flows,
+        "companies": codes,
+        "reps": reps,
+        "session_scope": scope,
+        "subprocesses": children,
+    }
+
+
+def _full_records(
+    harness: ModuleType, reps: int, total_ms: float, *, with_l_d: bool = False
+) -> Records:
+    """Every planned sample: L-A for every company, L-D (Samsung only) if asked."""
+    records = [
+        _record("L-A", corp_code, rep, total_ms)
+        for corp_code in _catalog_codes(harness)
+        for rep in range(1, reps + 1)
+    ]
+    if with_l_d:
+        records.extend(
+            _record("L-D", "00126380", rep, total_ms) for rep in range(1, reps + 1)
+        )
+    return records
+
+
+def _sample_plan(out_dir: Path) -> dict[str, object]:
+    comparison = json.loads((out_dir / "comparison.json").read_text(encoding="utf-8"))
+    plan: dict[str, object] = comparison["sample_plan"]
+    return plan
+
+
+def _plan_arms(out_dir: Path) -> dict[str, dict[str, object]]:
+    arms = _sample_plan(out_dir)["arms"]
+    assert isinstance(arms, list)
+    return {str(arm["arm"]): arm for arm in arms}
+
+
+def test_compare_ab_fails_when_both_arms_miss_the_same_planned_samples(
+    compare_runs: ModuleType, harness: ModuleType, tmp_path: Path
+) -> None:
+    # W6 F1 repro: 5 companies x 4 reps in block scope (ABBAABBA); all eight
+    # children exit 1 after the first company, so both arms hold only its reps.
+    first = _catalog_codes(harness)[0]
+    base = [_record("L-A", first, rep, 1000.0) for rep in range(1, 5)]
+    new = [_record("L-A", first, rep, 400.0) for rep in range(1, 5)]
+    fields = _ab_fields(harness, scope="block", reps=4, failing=frozenset(range(1, 9)))
+    children = fields["subprocesses"]
+    assert isinstance(children, list)
+    assert "".join(str(child["arm"]) for child in children) == "ABBAABBA"
+    ab = _write_ab(tmp_path / "f1", base, new, ab_fields=fields)
+
+    assert compare_runs.main(["--ab", str(ab)]) == 1
+
+    verdict = _verdict(ab)
+    assert verdict["latency"] == "PASS"
+    assert verdict["invariance"] == "PASS"
+    assert verdict["sample_plan"] == "FAIL"
+    assert verdict["overall"] == "FAIL"
+    for arm in _plan_arms(ab).values():
+        missing = arm["missing"]
+        assert isinstance(missing, list)
+        assert (arm["planned"], arm["observed"], len(missing)) == (20, 4, 16)
+    failed = _sample_plan(ab)["failed_children"]
+    assert isinstance(failed, list)
+    assert len(failed) == 8
+    markdown = (ab / "comparison.md").read_text(encoding="utf-8")
+    assert "| base | 20 | 4 | 16 | 0 | 0 |" in markdown
+    assert "failed ab child: #1 block:r1:A (exit 1)" in markdown
+    assert compare_runs.main(["--ab", str(ab), "--allow-incomplete"]) == 3
+    assert _verdict(ab)["overall"] == "PASS_WITH_INCOMPLETE"
+
+
+def test_compare_ab_treats_a_duplicate_sample_as_incomplete(
+    compare_runs: ModuleType, harness: ModuleType, tmp_path: Path
+) -> None:
+    # The same sample twice in both arms keeps the per-company counts equal.
+    second = _catalog_codes(harness)[1]
+    base = [*_full_records(harness, 2, 1000.0), _record("L-A", second, 2, 1000.0)]
+    new = [*_full_records(harness, 2, 400.0), _record("L-A", second, 2, 400.0)]
+    fields = _ab_fields(harness, scope="block", reps=2)
+    ab = _write_ab(tmp_path / "dup", base, new, ab_fields=fields)
+
+    assert compare_runs.main(["--ab", str(ab)]) == 1
+
+    verdict = _verdict(ab)
+    assert _statuses(verdict) == {"L-A": "COMPLETE"}
+    assert verdict["sample_plan"] == "FAIL"
+    assert _plan_arms(ab)["new"]["duplicate"] == [["L-A", second, 2]]
+    markdown = (ab / "comparison.md").read_text(encoding="utf-8")
+    assert f"duplicate in base: L-A/{second} r2" in markdown
+    assert compare_runs.main(["--ab", str(ab), "--allow-incomplete"]) == 3
+
+
+def test_compare_ab_treats_a_failed_child_as_incomplete_despite_every_sample(
+    compare_runs: ModuleType, harness: ModuleType, tmp_path: Path
+) -> None:
+    fields = _ab_fields(harness, scope="block", reps=2, failing=frozenset({3}))
+    base = _full_records(harness, 2, 1000.0)
+    new = _full_records(harness, 2, 400.0)
+    ab = _write_ab(tmp_path / "child", base, new, ab_fields=fields)
+
+    assert compare_runs.main(["--ab", str(ab)]) == 1
+
+    verdict = _verdict(ab)
+    assert verdict["latency"] == "PASS"
+    assert verdict["sample_plan"] == "FAIL"
+    assert all(not arm["missing"] for arm in _plan_arms(ab).values())
+    markdown = (ab / "comparison.md").read_text(encoding="utf-8")
+    assert "failed ab child: #3 block:r2:B (exit 1)" in markdown
+    assert compare_runs.main(["--ab", str(ab), "--allow-incomplete"]) == 3
+
+
+@pytest.mark.parametrize("scope", ["block", "rep"])
+def test_compare_ab_passes_a_complete_healthy_run(
+    compare_runs: ModuleType, harness: ModuleType, tmp_path: Path, scope: str
+) -> None:
+    fields = _ab_fields(harness, scope=scope, reps=2, flows="L-A,L-D")
+    base = _full_records(harness, 2, 1000.0, with_l_d=True)
+    new = _full_records(harness, 2, 400.0, with_l_d=True)
+    ab = _write_ab(tmp_path / scope, base, new, ab_fields=fields)
+
+    assert compare_runs.main(["--ab", str(ab)]) == 0
+
+    verdict = _verdict(ab)
+    assert verdict["overall"] == "PASS"
+    assert verdict["sample_plan"] == "PASS"
+    # flows.json limits L-D to Samsung: 5 companies x 2 reps of L-A + 2 of L-D
+    counts = {
+        name: (arm["planned"], arm["observed"]) for name, arm in _plan_arms(ab).items()
+    }
+    assert counts == {"base": (12, 12), "new": (12, 12)}
+
+
+def test_compare_ab_rep_scope_fails_when_both_arms_lose_one_company_rep(
+    compare_runs: ModuleType, harness: ModuleType, tmp_path: Path
+) -> None:
+    lost = _catalog_codes(harness)[2]
+    fields = _ab_fields(harness, scope="rep", reps=2)
+    children = fields["subprocesses"]
+    assert isinstance(children, list)
+    failed_positions = []
+    for child in children:
+        if child["corp_code"] == lost and child["rep"] == 2:
+            child["exit_code"] = 1
+            failed_positions.append(child["position"])
+    base = [
+        record
+        for record in _full_records(harness, 2, 1000.0)
+        if (record["corp_code"], record["rep"]) != (lost, 2)
+    ]
+    new = [
+        record
+        for record in _full_records(harness, 2, 400.0)
+        if (record["corp_code"], record["rep"]) != (lost, 2)
+    ]
+    ab = _write_ab(tmp_path / "rep", base, new, ab_fields=fields)
+
+    assert compare_runs.main(["--ab", str(ab)]) == 1
+
+    verdict = _verdict(ab)
+    assert _statuses(verdict) == {"L-A": "COMPLETE"}
+    assert verdict["sample_plan"] == "FAIL"
+    for arm in _plan_arms(ab).values():
+        assert arm["missing"] == [["L-A", lost, 2]]
+    markdown = (ab / "comparison.md").read_text(encoding="utf-8")
+    assert len(failed_positions) == 2
+    for position in failed_positions:
+        assert f"failed ab child: #{position} {lost}:r2:" in markdown
+
+
+def test_compare_runs_checks_each_run_against_its_recorded_plan(
+    compare_runs: ModuleType, tmp_path: Path
+) -> None:
+    planned = [("L-A", "X", rep) for rep in (1, 2, 3)]
+    base = _write_run(
+        tmp_path / "base", [_record("L-A", "X", 1, 1000.0)], planned=planned
+    )
+    new = _write_run(tmp_path / "new", [_record("L-A", "X", 1, 400.0)], planned=planned)
+    out = tmp_path / "out"
+
+    arguments = ["--base", str(base), "--new", str(new), "--out", str(out)]
+    assert compare_runs.main(arguments) == 1
+
+    assert _verdict(out)["sample_plan"] == "FAIL"
+    assert _plan_arms(out)["new"]["missing"] == [["L-A", "X", 2], ["L-A", "X", 3]]
+
+
+def test_compare_runs_checks_the_plan_before_exclusions(
+    compare_runs: ModuleType, tmp_path: Path
+) -> None:
+    planned = [("L-A", "X", rep) for rep in (1, 2, 3)]
+    base = _write_run(
+        tmp_path / "base",
+        [_record("L-A", "X", rep, 1000.0) for rep in (1, 2, 3)],
+        planned=planned,
+    )
+    new = _write_run(
+        tmp_path / "new",
+        [_record("L-A", "X", rep, 400.0) for rep in (1, 2, 3)],
+        planned=planned,
+    )
+    out = tmp_path / "out"
+
+    arguments = ["--base", str(base), "--new", str(new), "--out", str(out)]
+    assert compare_runs.main([*arguments, "--exclude-first-in-session"]) == 0
+
+    assert _verdict(out)["sample_plan"] == "PASS"
+    assert all(not arm["missing"] for arm in _plan_arms(out).values())
+
+
+def test_compare_runs_without_a_recorded_plan_judges_recorded_samples_only(
+    compare_runs: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    base = _write_run(tmp_path / "base", [_record("L-A", "X", 1, 1000.0)])
+    new = _write_run(tmp_path / "new", [_record("L-A", "X", 1, 400.0)])
+    out = tmp_path / "out"
+
+    arguments = ["--base", str(base), "--new", str(new), "--out", str(out)]
+    assert compare_runs.main(arguments) == 0
+
+    printed = capsys.readouterr().out
+    assert "notice: planned sample set unknown for base" in printed
+    assert "notice: planned sample set unknown for new" in printed
+    assert _verdict(out)["sample_plan"] == "PASS"
+    assert _sample_plan(out)["source"] is None
+
+
+class _FlowLike(Protocol):
+    @property
+    def flow_id(self) -> str: ...
+
+
+class _CompanyLike(Protocol):
+    @property
+    def corp_code(self) -> str: ...
+
+
+class _ClosingCaller:
+    def close(self) -> None:
+        return None
+
+
+def test_run_records_the_planned_samples_it_measures(
+    harness: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given: a remote run of two companies, reps 2-3, without any network
+    catalog = harness.load_catalog()
+    flows = harness.select_flows(catalog, "R-A,R-C", "remote")
+    companies = [
+        harness.ResolvedCompany(code, "name", "20260101000000", "attachment")
+        for code in ("00126380", "00164779")
+    ]
+    measured: list[tuple[str, str, int]] = []
+
+    def fake_run_flow(
+        session: object, flow: _FlowLike, company: _CompanyLike, rep: int
+    ) -> dict[str, object]:
+        measured.append((flow.flow_id, company.corp_code, rep))
+        return {
+            "valid": True,
+            "total_ms": 1.0,
+            "server_ms": 1.0,
+            "loader_ms": 0.0,
+            "upstream_request_count": None,
+            "invalid_reasons": [],
+        }
+
+    monkeypatch.setattr(harness, "_run_plan", lambda _ns: (catalog, flows, companies))
+    monkeypatch.setattr(harness, "read_api_key", lambda: _FAKE_KEY)
+    monkeypatch.setattr(
+        harness, "_open_caller", lambda *_args: (_ClosingCaller(), None, None)
+    )
+    monkeypatch.setattr(harness, "measure_opendart_rtt", dict)
+    monkeypatch.setattr(harness, "run_flow", fake_run_flow)
+    namespace = harness.build_parser().parse_args(
+        [
+            "run",
+            "--target",
+            "remote",
+            "--flows",
+            "R-A,R-C",
+            "--reps",
+            "2",
+            "--rep-offset",
+            "1",
+            "--run-id",
+            "PLAN",
+            "--out",
+            str(tmp_path),
+            "--url",
+            "https://example.invalid/api/mcp",
+        ]
+    )
+
+    # When
+    assert harness.run_command(namespace) == 0
+
+    # Then: the recorded plan is exactly what ran, R-C for Samsung only
+    env_text = (tmp_path / "PLAN" / "env.json").read_text(encoding="utf-8")
+    samples = json.loads(env_text)["sessions"][0]["planned_samples"]
+    recorded = [(s["flow"], s["corp_code"], s["rep"]) for s in samples]
+    assert measured == [
+        ("R-A", "00126380", 2),
+        ("R-C", "00126380", 2),
+        ("R-A", "00126380", 3),
+        ("R-C", "00126380", 3),
+        ("R-A", "00164779", 2),
+        ("R-A", "00164779", 3),
+    ]
+    assert recorded == measured
+    assert _FAKE_KEY not in env_text

@@ -6,7 +6,10 @@ Subcommands (run from the repo root with ``uv run python``):
   run      timed flows for one target in one process (= one session)
   ab       ``run --reps 1`` subprocesses between two project trees, arm order
            counterbalanced (ABBA) per company x rep; each child is started with
-           a sanitized environment and ``--expect-code-root <its tree>``
+           a sanitized environment and ``--expect-code-root <its tree>``.
+           ``--session-scope block`` instead runs every company in one child
+           per rep and arm (ABBA over reps), so in-process caches (the company
+           directory) carry over from one company to the next as in a server
 
 Targets: ``local`` (in-process stdio MCP server object), ``remote`` (deployed
 HTTPS endpoint) and ``remote-asgi`` (the same ASGI app of the code under test,
@@ -344,6 +347,38 @@ def select_flows(catalog: FlowCatalog, spec: str, target: str) -> tuple[FlowSpec
             msg = f"flow {flow.flow_id} reuses {flow.reuses}'s output; select both"
             raise HarnessError(msg)
     return selected
+
+
+class _HasCorpCode(Protocol):
+    @property
+    def corp_code(self) -> str: ...
+
+
+# (flow, corp_code, rep): the key of one recorded sample in flows.jsonl
+type PlannedSample = tuple[str, str, int]
+
+
+def run_order[C: _HasCorpCode](
+    flows: Sequence[FlowSpec], companies: Sequence[C], reps: range
+) -> list[tuple[C, int, FlowSpec]]:
+    """(company, rep, flow) in the order ``run`` measures them."""
+    return [
+        (company, rep, flow)
+        for company in companies
+        for rep in reps
+        for flow in flows
+        if flow.applies_to(company.corp_code)
+    ]
+
+
+def planned_samples(
+    flows: Sequence[FlowSpec], companies: Sequence[_HasCorpCode], reps: range
+) -> list[PlannedSample]:
+    """Every sample a ``run`` of this plan records, one per (flow, company, rep)."""
+    return [
+        (flow.flow_id, company.corp_code, rep)
+        for company, rep, flow in run_order(flows, companies, reps)
+    ]
 
 
 # ---------------------------------------------------------------- resolution
@@ -1394,7 +1429,12 @@ def _open_caller(
 
 @contextmanager
 def open_session(
-    namespace: argparse.Namespace, catalog: FlowCatalog, run_dir: Path, key: str
+    namespace: argparse.Namespace,
+    catalog: FlowCatalog,
+    run_dir: Path,
+    key: str,
+    *,
+    planned: Sequence[PlannedSample],
 ) -> Iterator[Session]:
     target: str = namespace.target
     caller, root, env_url = _open_caller(target, run_dir, key, namespace.url)
@@ -1435,6 +1475,12 @@ def open_session(
         "started_utc": utc_now(),
         "pid": os.getpid(),
         **base,
+        # compare_runs checks the recorded samples against this plan, so a
+        # session that stopped early cannot pass as a complete one.
+        "planned_samples": [
+            {"flow": flow, "corp_code": corp_code, "rep": rep}
+            for flow, corp_code, rep in planned
+        ],
         **measure_opendart_rtt(),
     }
     write_env(run_dir, session_info, base)
@@ -1505,28 +1551,24 @@ def run_command(namespace: argparse.Namespace) -> int:
         return EXIT_USAGE
     run_dir.mkdir(parents=True, exist_ok=True)
     invalid = 0
-    with open_session(namespace, catalog, run_dir, key) as session:
-        for company in companies:
-            for rep in range(
-                namespace.rep_offset + 1, namespace.rep_offset + namespace.reps + 1
-            ):
-                for flow in flows:
-                    if not flow.applies_to(company.corp_code):
-                        continue
-                    record = run_flow(session, flow, company, rep)
-                    invalid += 0 if record["valid"] else 1
-                    print(
-                        f"[{flow.flow_id} {company.corp_code} r{rep}] total={record['total_ms']}ms "
-                        f"server={record['server_ms']}ms loader={record['loader_ms']}ms "
-                        f"valid={record['valid']} upstream={record['upstream_request_count']} "
-                        f"{record['invalid_reasons'] or ''}"
-                    )
-                    if session.budget_exceeded():
-                        print(
-                            f"aborted: upstream budget {namespace.max_upstream} exceeded",
-                            file=sys.stderr,
-                        )
-                        return EXIT_BUDGET
+    reps = range(namespace.rep_offset + 1, namespace.rep_offset + namespace.reps + 1)
+    planned = planned_samples(flows, companies, reps)
+    with open_session(namespace, catalog, run_dir, key, planned=planned) as session:
+        for company, rep, flow in run_order(flows, companies, reps):
+            record = run_flow(session, flow, company, rep)
+            invalid += 0 if record["valid"] else 1
+            print(
+                f"[{flow.flow_id} {company.corp_code} r{rep}] total={record['total_ms']}ms "
+                f"server={record['server_ms']}ms loader={record['loader_ms']}ms "
+                f"valid={record['valid']} upstream={record['upstream_request_count']} "
+                f"{record['invalid_reasons'] or ''}"
+            )
+            if session.budget_exceeded():
+                print(
+                    f"aborted: upstream budget {namespace.max_upstream} exceeded",
+                    file=sys.stderr,
+                )
+                return EXIT_BUDGET
         print(
             f"--- {run_dir} (upstream requests this session: {session.upstream()}) ---"
         )
@@ -1564,7 +1606,7 @@ def _ab_command_line(
     project: Path,
     namespace: argparse.Namespace,
     *,
-    corp_code: str,
+    corp_codes: Sequence[str],
     rep: int,
     arm: str,
     budget: int,
@@ -1584,7 +1626,7 @@ def _ab_command_line(
         "--flows",
         namespace.flows,
         "--companies",
-        corp_code,
+        ",".join(corp_codes),
         "--reps",
         "1",
         "--rep-offset",
@@ -1643,6 +1685,33 @@ def ab_schedule(corp_codes: Sequence[str], reps: int) -> list[tuple[str, int, st
     return schedule
 
 
+def ab_block_schedule(reps: int) -> list[tuple[int, str]]:
+    """(rep, arm) in execution order for ``--session-scope block``.
+
+    Each block is one rep of every company in one session per arm; the arm
+    that goes first alternates with the block (even A->B, odd B->A).
+    """
+    schedule: list[tuple[int, str]] = []
+    for rep_index in range(reps):
+        first, second = ("A", "B") if rep_index % 2 == 0 else ("B", "A")
+        schedule.append((rep_index + 1, first))
+        schedule.append((rep_index + 1, second))
+    return schedule
+
+
+# (corp_codes run by one child, rep, arm)
+type AbJob = tuple[tuple[str, ...], int, str]
+
+
+def ab_jobs(corp_codes: Sequence[str], reps: int, session_scope: str) -> list[AbJob]:
+    """The ``run`` children of an ab run, in execution order."""
+    if session_scope == "block":
+        return [(tuple(corp_codes), rep, arm) for rep, arm in ab_block_schedule(reps)]
+    return [
+        ((corp_code,), rep, arm) for corp_code, rep, arm in ab_schedule(corp_codes, reps)
+    ]
+
+
 @dataclass(frozen=True, slots=True)
 class AbPlan:
     uv: str
@@ -1655,11 +1724,15 @@ class AbPlan:
 def _run_ab_jobs(
     plan: AbPlan, namespace: argparse.Namespace, companies: Sequence[CompanySpec]
 ) -> tuple[int, list[dict[str, object]]]:
-    """One ``run --reps 1`` subprocess per company x rep x arm, in ABBA order."""
+    """One ``run --reps 1`` subprocess per job of ``ab_jobs``, in ABBA order."""
     runs: list[dict[str, object]] = []
     status = 0
-    schedule = ab_schedule([company.corp_code for company in companies], namespace.reps)
-    for position, (corp_code, rep, arm) in enumerate(schedule, start=1):
+    jobs = ab_jobs(
+        [company.corp_code for company in companies],
+        namespace.reps,
+        namespace.session_scope,
+    )
+    for position, (corp_codes, rep, arm) in enumerate(jobs, start=1):
         budget = namespace.max_upstream - _arm_upstream(plan.run_root)
         if budget <= 0:
             print("aborted: upstream budget exhausted", file=sys.stderr)
@@ -1668,17 +1741,22 @@ def _run_ab_jobs(
             plan.uv,
             plan.projects[arm],
             namespace,
-            corp_code=corp_code,
+            corp_codes=corp_codes,
             rep=rep,
             arm=arm,
             budget=budget,
             resolved=plan.resolved,
         )
         completed = subprocess.run(command, env=plan.env, check=False)  # noqa: S603
+        companies_field: dict[str, object] = (
+            {"corp_codes": list(corp_codes)}
+            if namespace.session_scope == "block"
+            else {"corp_code": corp_codes[0]}
+        )
         runs.append(
             {
                 "position": position,
-                "corp_code": corp_code,
+                **companies_field,
                 "rep": rep,
                 "arm": arm,
                 "project": str(plan.projects[arm]),
@@ -1738,7 +1816,13 @@ def ab_command(namespace: argparse.Namespace) -> int:
         "flows": namespace.flows,
         "companies": [company.corp_code for company in companies],
         "reps": namespace.reps,
-        "order": [f"{run['corp_code']}:r{run['rep']}:{run['arm']}" for run in runs],
+        "session_scope": namespace.session_scope,
+        "order": [
+            f"block:r{run['rep']}:{run['arm']}"
+            if namespace.session_scope == "block"
+            else f"{run['corp_code']}:r{run['rep']}:{run['arm']}"
+            for run in runs
+        ],
         "arm_order": "".join(str(run["arm"]) for run in runs),
         "subprocesses": runs,
         "upstream_request_count": _arm_upstream(run_root),
@@ -1799,6 +1883,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(ab)
     ab.add_argument("--a-project", required=True)
     ab.add_argument("--b-project", required=True)
+    ab.add_argument(
+        "--session-scope",
+        choices=("rep", "block"),
+        default="rep",
+        help="rep: one child per company x rep x arm; "
+        "block: one child per rep x arm running every company",
+    )
     return parser
 
 

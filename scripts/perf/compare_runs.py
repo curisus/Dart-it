@@ -29,6 +29,13 @@ dir, else the new run dir) and prints the Markdown.
   codes, with an xlsx diff for any pair whose data differ.
 - --ab first verifies arm isolation: every session in each arm's env.json must
   have imported dart_crawler from the project ab.json names for that arm.
+- Planned samples: every (flow, corp_code, rep) the run planned must be
+  recorded exactly once per arm - an --ab plan is ab.json's flows x companies x
+  reps (each flow limited to its flows.json companies), a --base/--new plan is
+  the union of the planned_samples each env.json session recorded. A missing,
+  duplicate or unplanned sample, or an ab child that exited non-zero, fails
+  the comparison (PASS_WITH_INCOMPLETE with --allow-incomplete). A run that
+  recorded no plan is judged on its recorded samples only, with a notice.
 - --exclude-cold / --exclude-first-in-session drop flows flagged so (local and
   remote runs alike). They are refused for --ab: every ab subprocess is its
   own session, so each one's first flow is first-in-session (and, remotely,
@@ -43,12 +50,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from collections.abc import Collection, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Final, cast
 
-from latency_harness import code_root_mismatch, load_catalog
+from latency_harness import (
+    HarnessError,
+    PlannedSample,
+    code_root_mismatch,
+    load_catalog,
+    planned_samples,
+    select_companies,
+    select_flows,
+)
 from perf_stats import (
     DEFAULT_MAX_REGRESSION,
     DEFAULT_TARGET_REDUCTION,
@@ -61,6 +77,7 @@ from perf_stats import (
     combine_verdicts,
     invariance_verdict,
     oracle_verdict,
+    worst,
 )
 from xlsx_invariance import compare_workbooks, flow_identity, report_json
 
@@ -201,6 +218,204 @@ def verify_ab_arms(ab_dir: Path) -> dict[str, list[str]]:
                 raise CompareError(msg)
             roots[arm].append(root)
     return roots
+
+
+# ---------------------------------------------------------------- planned samples
+
+# How many sample keys of one kind comparison.md lists before counting the rest.
+_LISTED_SAMPLES: Final = 20
+PLAN_GAP_REASON: Final = (
+    "planned-sample gaps fail the comparison (see --allow-incomplete)"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ArmSampleCheck:
+    """One arm's recorded samples measured against the planned set."""
+
+    arm: str
+    planned: int
+    observed: int
+    missing: tuple[PlannedSample, ...]
+    duplicate: tuple[PlannedSample, ...]
+    unplanned: tuple[PlannedSample, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SamplePlanCheck:
+    """Planned-sample completeness of the arms whose plan is known."""
+
+    source: str | None
+    arms: tuple[ArmSampleCheck, ...]
+    failed_children: tuple[dict[str, object], ...]
+    notices: tuple[str, ...]
+
+    def problems(self) -> list[str]:
+        problems = [
+            f"{arm.arm}: {len(keys)} {kind} sample(s) against {arm.planned} planned"
+            for arm in self.arms
+            for kind, keys in (
+                ("missing", arm.missing),
+                ("duplicate", arm.duplicate),
+                ("unplanned", arm.unplanned),
+            )
+            if keys
+        ]
+        problems.extend(
+            f"ab child {_child_label(child)} exited non-zero"
+            for child in self.failed_children
+        )
+        return problems
+
+
+def _sample_key(record: FlowRecord) -> PlannedSample:
+    rep = record.get("rep")
+    return (
+        str(record.get("flow")),
+        str(record.get("corp_code")),
+        rep if isinstance(rep, int) else -1,
+    )
+
+
+def check_arm_samples(
+    arm: str, planned: frozenset[PlannedSample], records: Sequence[FlowRecord]
+) -> ArmSampleCheck:
+    """Planned samples never recorded, recorded more than once, or never planned."""
+    counts = Counter(_sample_key(record) for record in records)
+    return ArmSampleCheck(
+        arm=arm,
+        planned=len(planned),
+        observed=len(records),
+        missing=tuple(sorted(planned - set(counts))),
+        duplicate=tuple(sorted(key for key, count in counts.items() if count > 1)),
+        unplanned=tuple(sorted(set(counts) - planned)),
+    )
+
+
+def ab_plan(ab: dict[str, object]) -> frozenset[PlannedSample] | None:
+    """ab.json's flows x companies x reps, each flow limited to its companies."""
+    target = ab.get("target")
+    flows = ab.get("flows")
+    companies = ab.get("companies")
+    reps = ab.get("reps")
+    if not (
+        isinstance(target, str)
+        and isinstance(flows, str)
+        and isinstance(companies, list)
+        and isinstance(reps, int)
+    ):
+        return None
+    catalog = load_catalog()
+    try:
+        return frozenset(
+            planned_samples(
+                select_flows(catalog, flows, target),
+                select_companies(catalog, ",".join(map(str, companies))),
+                range(1, reps + 1),
+            )
+        )
+    except HarnessError as error:
+        msg = f"ab.json's plan does not fit flows.json: {error}"
+        raise CompareError(msg) from error
+
+
+def env_plan(run_dir: Path) -> frozenset[PlannedSample] | None:
+    """The union of the plans every env.json session recorded (None if one did not)."""
+    env = _load_json_object(run_dir / "env.json")
+    sessions = None if env is None else env.get("sessions")
+    if not isinstance(sessions, list) or not sessions:
+        return None
+    planned: set[PlannedSample] = set()
+    for session in sessions:
+        samples = session.get("planned_samples") if isinstance(session, dict) else None
+        if not isinstance(samples, list):
+            return None
+        for sample in samples:
+            if not isinstance(sample, dict):
+                return None
+            flow = sample.get("flow")
+            corp_code = sample.get("corp_code")
+            rep = sample.get("rep")
+            if not (
+                isinstance(flow, str)
+                and isinstance(corp_code, str)
+                and isinstance(rep, int)
+            ):
+                return None
+            planned.add((flow, corp_code, rep))
+    return frozenset(planned)
+
+
+def failed_children(ab: dict[str, object]) -> tuple[dict[str, object], ...]:
+    """The ab children that did not exit 0 (a child without an exit code failed)."""
+    children = ab.get("subprocesses")
+    if not isinstance(children, list):
+        return ()
+    return tuple(
+        cast("dict[str, object]", child)
+        for child in children
+        if isinstance(child, dict) and child.get("exit_code") != 0
+    )
+
+
+def _child_label(child: dict[str, object]) -> str:
+    companies = child.get("corp_codes", child.get("corp_code"))
+    scope = "block" if isinstance(companies, list) else companies
+    return (
+        f"#{child.get('position', '?')} {scope}:r{child.get('rep')}:{child.get('arm')} "
+        f"(exit {child.get('exit_code')})"
+    )
+
+
+def check_sample_plan(
+    base: tuple[Path, list[FlowRecord]],
+    new: tuple[Path, list[FlowRecord]],
+    ab_dir: Path | None,
+) -> SamplePlanCheck:
+    """Each arm's recorded samples against its plan, plus the failed ab children."""
+    children: tuple[dict[str, object], ...] = ()
+    notices: list[str] = []
+    if ab_dir is not None:
+        ab = _load_json_object(ab_dir / "ab.json") or {}
+        children = failed_children(ab)
+        shared = ab_plan(ab)
+        plans = {"base": shared, "new": shared}
+        source = "ab.json"
+        if shared is None:
+            notices.append(
+                "planned sample set unknown: ab.json records no target/flows/"
+                "companies/reps; completeness is judged on the recorded samples only"
+            )
+    else:
+        plans = {"base": env_plan(base[0]), "new": env_plan(new[0])}
+        source = "env.json"
+        notices.extend(
+            f"planned sample set unknown for {arm} ({path}): its env.json sessions "
+            "record no planned_samples; completeness is judged on the recorded "
+            "samples only"
+            for arm, path in (("base", base[0]), ("new", new[0]))
+            if plans[arm] is None
+        )
+    arms = tuple(
+        check_arm_samples(arm, plan, records)
+        for arm, plan, records in (
+            ("base", plans["base"], base[1]),
+            ("new", plans["new"], new[1]),
+        )
+        if plan is not None
+    )
+    return SamplePlanCheck(
+        source=source if arms else None,
+        arms=arms,
+        failed_children=children,
+        notices=tuple(notices),
+    )
+
+
+def sample_plan_verdict(check: SamplePlanCheck, *, allow_incomplete: bool) -> Verdict:
+    if not check.problems():
+        return Verdict.PASS
+    return Verdict.PASS_WITH_INCOMPLETE if allow_incomplete else Verdict.FAIL
 
 
 # ---------------------------------------------------------------- assessment
@@ -438,10 +653,57 @@ def _invariance_rows(entries: list[InvarianceEntry]) -> list[str]:
     return rows
 
 
+def _sample_list(keys: tuple[PlannedSample, ...]) -> str:
+    shown = ", ".join(
+        f"{flow}/{corp_code} r{rep}" for flow, corp_code, rep in keys[:_LISTED_SAMPLES]
+    )
+    more = len(keys) - _LISTED_SAMPLES
+    return shown + (f" ... and {more} more" if more > 0 else "")
+
+
+def _sample_plan_lines(plan: SamplePlanCheck, status: Verdict) -> list[str]:
+    lines = [
+        "",
+        "## Planned samples",
+        "",
+        f"- plan source: {plan.source or 'unknown'} / planned samples: **{status}**",
+        *(f"- notice: {notice}" for notice in plan.notices),
+    ]
+    if plan.arms:
+        lines.extend(
+            [
+                "",
+                "| arm | planned | observed | missing | duplicate | unplanned |",
+                "|---|---|---|---|---|---|",
+                *(
+                    f"| {arm.arm} | {arm.planned} | {arm.observed} | {len(arm.missing)} "
+                    f"| {len(arm.duplicate)} | {len(arm.unplanned)} |"
+                    for arm in plan.arms
+                ),
+                "",
+            ]
+        )
+    lines.extend(
+        f"- {kind} in {arm.arm}: {_sample_list(keys)}"
+        for arm in plan.arms
+        for kind, keys in (
+            ("missing", arm.missing),
+            ("duplicate", arm.duplicate),
+            ("unplanned", arm.unplanned),
+        )
+        if keys
+    )
+    lines.extend(
+        f"- failed ab child: {_child_label(child)}" for child in plan.failed_children
+    )
+    return lines
+
+
 def render_markdown(
     result: dict[str, object],
     entries: list[InvarianceEntry],
     verdict: OracleVerdict,
+    plan: tuple[SamplePlanCheck, Verdict],
 ) -> str:
     lines = [
         "# Latency comparison",
@@ -453,13 +715,17 @@ def render_markdown(
             f"(target reduction {result['target_reduction']}, max regression {result['max_regression']})"
         ),
         f"- allow incomplete: {result['allow_incomplete']} / excluded: {result['excluded'] or 'nothing'}",
-        f"- latency: **{verdict.latency}** / invariance: **{verdict.invariance}** / overall: **{verdict.overall}**",
+        (
+            f"- latency: **{verdict.latency}** / invariance: **{verdict.invariance}** "
+            f"/ planned samples: **{plan[1]}** / overall: **{verdict.overall}**"
+        ),
     ]
     if verdict.overall is Verdict.PASS_WITH_INCOMPLETE:
         lines.append(
             "- **WARNING: PASS_WITH_INCOMPLETE is not a PASS - some flows were not fully measured.**"
         )
     lines.extend(f"- reason: {reason}" for reason in verdict.reasons)
+    lines.extend(_sample_plan_lines(*plan))
     lines.extend(["", "## Flows", "", *_flow_rows(verdict)])
     lines.extend(["", "## Companies", "", *_company_rows(verdict)])
     lines.extend(
@@ -529,8 +795,19 @@ def compare(namespace: argparse.Namespace) -> int:
             )
         ]
 
-    base = kept(load_flows(base_dir))
-    new = kept(load_flows(new_dir))
+    base_records = load_flows(base_dir)
+    new_records = load_flows(new_dir)
+    # The plan is checked before any exclusion: an excluded sample was still
+    # recorded, while a missing one never was.
+    plan = check_sample_plan(
+        (base_dir, base_records),
+        (new_dir, new_records),
+        Path(namespace.ab) if is_ab else None,
+    )
+    for notice in plan.notices:
+        print(f"notice: {notice}")
+    base = kept(base_records)
+    new = kept(new_records)
     flows = assess_flows(
         base,
         new,
@@ -553,6 +830,18 @@ def compare(namespace: argparse.Namespace) -> int:
         ],
         allow_incomplete=namespace.allow_incomplete,
     )
+    plan_status = sample_plan_verdict(plan, allow_incomplete=namespace.allow_incomplete)
+    plan_problems = plan.problems()
+    if plan_problems:
+        verdict = replace(
+            verdict,
+            overall=worst(verdict.overall, plan_status),
+            reasons=(
+                *verdict.reasons,
+                *plan_problems,
+                *(() if namespace.allow_incomplete else (PLAN_GAP_REASON,)),
+            ),
+        )
     excluded = [
         name
         for name, flag in (
@@ -578,9 +867,16 @@ def compare(namespace: argparse.Namespace) -> int:
             "new": _invalid_samples(new),
         },
         "invariance": [asdict(entry) for entry in entries],
+        "sample_plan": {
+            "source": plan.source,
+            "notices": list(plan.notices),
+            "arms": [asdict(arm) for arm in plan.arms],
+            "failed_children": list(plan.failed_children),
+        },
         "verdict": {
             "latency": verdict.latency.value,
             "invariance": verdict.invariance.value,
+            "sample_plan": plan_status.value,
             "overall": verdict.overall.value,
             "reasons": list(verdict.reasons),
             "missing_representative": list(verdict.missing_representative),
@@ -591,7 +887,7 @@ def compare(namespace: argparse.Namespace) -> int:
     (out_dir / "comparison.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    markdown = render_markdown(result, entries, verdict)
+    markdown = render_markdown(result, entries, verdict, (plan, plan_status))
     (out_dir / "comparison.md").write_text(markdown, encoding="utf-8")
     print(markdown)
     print(f"wrote {out_dir / 'comparison.json'} and comparison.md")
