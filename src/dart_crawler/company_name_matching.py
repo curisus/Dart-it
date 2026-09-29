@@ -25,6 +25,15 @@ class _QueryReadings:
 
 
 @dataclass(frozen=True, slots=True)
+class _NameReadings:
+    """The per-name values _rank_company derives, computed once per directory."""
+
+    normalized: str
+    letter: str
+    canonical: str
+
+
+@dataclass(frozen=True, slots=True)
 class _CompanyNameMatch:
     score: float
     confidence: MatchConfidence
@@ -161,3 +170,56 @@ def _rank_company(
         return _CompanyNameMatch(825.0, MatchConfidence.ALIAS)
     score = SequenceMatcher(None, query.brand, canonical_name).ratio() * 100.0
     return _CompanyNameMatch(score, MatchConfidence.SIMILAR)
+
+
+def _name_readings(company_name: str) -> _NameReadings:
+    normalized = _normalize(company_name)
+    canonical = _canonical_key(company_name)
+    return _NameReadings(
+        normalized=normalized,
+        letter=_letter_reading(company_name),
+        # Most names have no brand token; sharing the equal string keeps a
+        # cached directory from holding two copies of it.
+        canonical=normalized if canonical == normalized else canonical,
+    )
+
+
+def _rank_readings(
+    entry: CompanyCode,
+    readings: _NameReadings,
+    query: _QueryReadings,
+) -> _CompanyNameMatch | None:
+    """_rank_company's fixed-score tiers from precomputed readings.
+
+    None means the SIMILAR tier, whose score is _similar_score. _rank_company
+    stays the reference implementation; both must rank every entry alike.
+    """
+    name = readings.normalized
+    stock = entry.stock_code or ""
+    if query.normalized == stock or query.normalized == entry.corp_code:
+        return _CompanyNameMatch(1_000.0, MatchConfidence.EXACT)
+    if query.normalized == name:
+        return _CompanyNameMatch(950.0, MatchConfidence.EXACT)
+    if name.startswith(query.normalized):
+        return _CompanyNameMatch(800.0, MatchConfidence.PREFIX)
+    if query.normalized in name:
+        return _CompanyNameMatch(700.0, MatchConfidence.CONTAINS)
+    letter_name = readings.letter
+    if (
+        query.letter == name
+        or query.normalized == letter_name
+        or query.letter == letter_name
+    ):
+        return _CompanyNameMatch(900.0, MatchConfidence.ALIAS)
+    canonical_name = readings.canonical
+    if query.brand == canonical_name:
+        return _CompanyNameMatch(900.0, MatchConfidence.ALIAS)
+    if canonical_name.startswith(query.brand):
+        return _CompanyNameMatch(850.0, MatchConfidence.ALIAS)
+    if query.brand in canonical_name:
+        return _CompanyNameMatch(825.0, MatchConfidence.ALIAS)
+    return None
+
+
+def _similar_score(query: _QueryReadings, readings: _NameReadings) -> float:
+    return SequenceMatcher(None, query.brand, readings.canonical).ratio() * 100.0

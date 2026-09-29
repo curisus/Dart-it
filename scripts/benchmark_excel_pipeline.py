@@ -32,7 +32,6 @@ _ALLOWED_WORKER_ERROR_REASONS: Final[frozenset[str]] = frozenset(
         "normalization_failed",
         "page_selection_failed",
         "peak_rss_measurement_failed",
-        "powershell_not_found",
         "wire_measurement_changed",
         "wire_serialization_failed",
         "xlsx_hardlink_failed",

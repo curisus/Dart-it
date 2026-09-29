@@ -28,6 +28,7 @@ _WINDOWS_ONLY: Final = pytest.mark.skipif(
     os.name != "nt",
     reason="requires Windows benchmark integration",
 )
+_POWERSHELL_EXECUTABLES: Final = ("powershell.exe", "pwsh.exe", "powershell", "pwsh")
 
 
 def _publication_failure(error_code: ErrorCode) -> ExcelResult[ExcelExportResult]:
@@ -122,67 +123,38 @@ def _run_benchmark(
     )
 
 
-@_WINDOWS_ONLY
-def test_smoke_uses_pwsh_when_legacy_powershell_is_unavailable(
-    tmp_path: Path,
-) -> None:
-    # Given: the CI platform tools expose PowerShell 7, but not legacy PowerShell.
+def test_smoke_measures_rss_without_any_powershell(tmp_path: Path) -> None:
+    # Given: uv is the only tool on PATH, so no PowerShell can be resolved.
     uv = shutil.which("uv")
-    pwsh = shutil.which("pwsh.exe")
     assert uv is not None
-    assert pwsh is not None
     environment = os.environ.copy()
-    environment["PATH"] = os.pathsep.join(
-        (str(Path(uv).parent), str(Path(pwsh).parent))
-    )
-    assert shutil.which("powershell.exe", path=environment["PATH"]) is None
-    assert shutil.which("pwsh.exe", path=environment["PATH"]) is not None
+    environment["PATH"] = str(Path(uv).parent)
+    for executable in _POWERSHELL_EXECUTABLES:
+        assert shutil.which(executable, path=environment["PATH"]) is None
     report_path = tmp_path / "benchmark.json"
 
     # When: the public benchmark entry point launches a real worker.
     completed = _run_benchmark(report_path, (1, 2, 2), environment)
 
-    # Then: the worker measures RSS through pwsh and still writes its report.
+    # Then: the worker measures RSS in-process and still writes its report.
     assert completed.returncode == 1, completed.stderr
     assert report_path.exists(), completed.stderr
     report = _JSON_OBJECT.validate_json(report_path.read_bytes())
     assert report["run_count"] == 1
     assert report["fresh_processes"] is True
+    samples = report["samples"]
+    assert isinstance(samples, list)
+    assert samples
+    for sample in samples:
+        peak_rss_mib = _JSON_OBJECT.validate_python(sample)["peak_rss_mib"]
+        assert isinstance(peak_rss_mib, int | float)
+        assert peak_rss_mib > 0
 
 
 @_WINDOWS_ONLY
-def test_worker_failure_preserves_controlled_diagnostic(tmp_path: Path) -> None:
-    # Given: uv is present, but neither supported PowerShell executable is on PATH.
-    uv = shutil.which("uv")
-    assert uv is not None
+def test_worker_accepts_junction_temp(tmp_path: Path) -> None:
+    # Given: ambient TEMP traverses a junction.
     environment = os.environ.copy()
-    environment["PATH"] = str(Path(uv).parent)
-    assert shutil.which("powershell.exe", path=environment["PATH"]) is None
-    assert shutil.which("pwsh.exe", path=environment["PATH"]) is None
-    report_path = tmp_path / "benchmark.json"
-
-    # When: the public entry point launches its real worker.
-    completed = _run_benchmark(report_path, (1, 2, 2), environment)
-
-    # Then: no report is claimed and the controlled worker reason is retained.
-    assert completed.returncode == 1
-    assert not report_path.exists()
-    assert completed.stderr.rstrip().endswith(
-        "BenchmarkError: worker_failed:powershell_not_found"
-    )
-
-
-@_WINDOWS_ONLY
-def test_worker_ignores_junction_temp_and_reaches_no_shell_failure(
-    tmp_path: Path,
-) -> None:
-    # Given: ambient TEMP traverses a junction and no PowerShell is on PATH.
-    uv = shutil.which("uv")
-    assert uv is not None
-    environment = os.environ.copy()
-    environment["PATH"] = str(Path(uv).parent)
-    assert shutil.which("powershell.exe", path=environment["PATH"]) is None
-    assert shutil.which("pwsh.exe", path=environment["PATH"]) is None
     real_temp = tmp_path / "real-temp"
     real_temp.mkdir()
     junction_temp = tmp_path / "junction-temp"
@@ -197,8 +169,9 @@ def test_worker_ignores_junction_temp_and_reaches_no_shell_failure(
             str(real_temp),
         ],
         check=True,
+        # mklink prints in the console code page (e.g. CP949), so keep bytes
+        # rather than decoding under PYTHONUTF8.
         capture_output=True,
-        text=True,
     )
     assert completed_link.returncode == 0
     environment["TEMP"] = str(junction_temp)
@@ -211,12 +184,9 @@ def test_worker_ignores_junction_temp_and_reaches_no_shell_failure(
     finally:
         os.rmdir(junction_temp)
 
-    # Then: it reaches the RSS stage instead of rejecting ambient TEMP.
-    assert completed.returncode == 1
-    assert not report_path.exists()
-    assert completed.stderr.rstrip().endswith(
-        "BenchmarkError: worker_failed:powershell_not_found"
-    )
+    # Then: it completes its report instead of rejecting ambient TEMP.
+    assert completed.returncode == 1, completed.stderr
+    assert report_path.exists(), completed.stderr
     assert "xlsx_output_root_failed" not in completed.stderr
 
 
@@ -233,7 +203,7 @@ def test_worker_ignores_junction_temp_and_reaches_no_shell_failure(
         ),
         pytest.param(
             (
-                "@echo benchmark_worker_error=powershell_not_found 1>&2",
+                "@echo benchmark_worker_error=peak_rss_measurement_failed 1>&2",
                 "@echo benchmark_worker_error=normalization_failed 1>&2",
             ),
             id="multiple_prefixed_values",
@@ -265,12 +235,22 @@ def test_worker_failure_does_not_relay_untrusted_prefixed_stderr(
     assert "FAKE_SECRET_VALUE" not in completed.stderr
 
 
+@pytest.mark.parametrize(
+    "worker_reason",
+    [
+        pytest.param("xlsx_output_root_failed", id="xlsx_output_root"),
+        pytest.param("peak_rss_measurement_failed", id="peak_rss"),
+    ],
+)
 @_WINDOWS_ONLY
-def test_parent_preserves_finite_xlsx_stage_diagnostic(tmp_path: Path) -> None:
-    # Given: the worker emits one finite, non-secret XLSX publication stage code.
+def test_parent_preserves_finite_worker_diagnostic(
+    tmp_path: Path,
+    worker_reason: str,
+) -> None:
+    # Given: the worker emits one finite, non-secret failure reason.
     fake_uv = tmp_path / "uv.cmd"
     _ = fake_uv.write_text(
-        "@echo benchmark_worker_error=xlsx_output_root_failed>&2\n@exit /b 2\n",
+        f"@echo benchmark_worker_error={worker_reason}>&2\n@exit /b 2\n",
         encoding="utf-8",
     )
     environment = os.environ.copy()
@@ -280,11 +260,11 @@ def test_parent_preserves_finite_xlsx_stage_diagnostic(tmp_path: Path) -> None:
     # When: the public benchmark entry point handles the failed worker launch.
     completed = _run_benchmark(report_path, (1, 2, 2), environment)
 
-    # Then: that allowlisted static stage survives without relaying arbitrary stderr.
+    # Then: that allowlisted static reason survives without relaying arbitrary stderr.
     assert completed.returncode == 1
     assert not report_path.exists()
     assert completed.stderr.rstrip().endswith(
-        "BenchmarkError: worker_failed:xlsx_output_root_failed"
+        f"BenchmarkError: worker_failed:{worker_reason}"
     )
 
 

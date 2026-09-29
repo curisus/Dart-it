@@ -1,34 +1,43 @@
-"""Company-code archive parsing and ranked company search."""
+"""Ranked company search over the cached OpenDART company directory."""
 
 from __future__ import annotations
 
+from bisect import insort
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from heapq import heapify, heappop
 from typing import Final, Protocol, assert_never
 
-from defusedxml import ElementTree
-
 from dart_crawler.api_models import DartListRow
+from dart_crawler.company_directory import (
+    CompanyDirectoryIndex,
+    CompanyDirectorySource,
+    load_company_directory,
+)
+
+# Re-exported: the latency probes time the directory parse under this name.
+from dart_crawler.company_directory import (
+    _parse_company_archive as _parse_company_archive,  # noqa: PLC0414
+)
 from dart_crawler.company_name_matching import (
     CompanyCode,
     _query_readings,
     _QueryReadings,
     _rank_company,
+    _rank_readings,
+    _similar_score,
 )
 from dart_crawler.domain import Company, Market, MatchConfidence, ReportKind
 from dart_crawler.filing_service import (
     matches_report_kind,
     validate_report_kind,
 )
-from dart_crawler.result import ErrorCode, Result, error_info
-from dart_crawler.zip_safety import ArchiveLimits, read_member
+from dart_crawler.result import ErrorCode, ErrorInfo, Result, error_info
 
 
-class CompanySource(Protocol):
+class CompanySource(CompanyDirectorySource, Protocol):
     """OpenDART capabilities required by company search."""
-
-    def download_company_codes(self) -> Result[bytes]:
-        raise NotImplementedError
 
     def list_disclosures(
         self,
@@ -47,6 +56,15 @@ class _SearchMatch:
     confidence: MatchConfidence
 
 
+@dataclass(frozen=True, slots=True)
+class _FilteredCandidates:
+    """Candidates that have the report kind, or the upstream failure to return."""
+
+    companies: tuple[Company, ...]
+    selected: tuple[_SearchMatch, ...]
+    upstream_failure: Result[tuple[DartListRow, ...]] | None = None
+
+
 _WEAK_MATCH_SCORE: Final[float] = 85.0
 _WEAK_MATCH_NEXT_ACTION: Final[str] = (
     "정확히 일치하는 회사명이 없습니다. 아래 번호 목록에서 회사를 선택하세요."
@@ -57,10 +75,17 @@ _ARCHIVE_NOT_FOUND_MESSAGE: Final[str] = (
 _ARCHIVE_NOT_FOUND_NEXT_ACTION: Final[str] = (
     "회사명, 종목코드 또는 회사코드 일부를 확인하세요."
 )
+_UPSTREAM_FAILURE_NEXT_ACTION: Final[str] = (
+    "OpenDART API 키와 네트워크 상태를 확인한 뒤 다시 시도하세요."
+)
+# Only this many best-ranked candidates are ever used: the first five as the
+# answer, or up to twenty checked for the requested report kind.
+_RANKED_CANDIDATES: Final[int] = 20
+_RESULT_LIMIT: Final[int] = 5
 
 
 class CompanySearchService:
-    """Search the OpenDART company directory without persistent state."""
+    """Search the OpenDART company directory; only the directory is cached."""
 
     def __init__(self, source: CompanySource) -> None:
         self._source = source
@@ -90,41 +115,23 @@ class CompanySearchService:
                 ),
                 next_action="회사명 또는 종목코드를 입력하세요.",
             )
-        archive = self._source.download_company_codes()
-        if not archive.ok or archive.data is None:
+        directory = load_company_directory(self._source)
+        if not directory.ok or directory.data is None:
             return Result.failure(
-                archive.error
-                if archive.error is not None
+                directory.error
+                if directory.error is not None
                 else error_info(
                     ErrorCode.UPSTREAM_UNAVAILABLE,
                     "회사코드 목록을 수집할 수 없습니다.",
                     retryable=True,
                 ),
-                next_action="잠시 후 회사 검색을 다시 시도하세요.",
+                next_action=directory.next_action,
             )
-        parsed_archive = _parse_company_archive(archive.data)
-        if not parsed_archive.ok or parsed_archive.data is None:
-            return Result.failure(
-                parsed_archive.error
-                if parsed_archive.error is not None
-                else error_info(
-                    ErrorCode.PARSE_FAILED,
-                    "회사코드 목록을 해석할 수 없습니다.",
-                    retryable=False,
-                ),
-                next_action="OpenDART 회사코드 파일 형식을 확인하세요.",
-            )
-        ranked = sorted(
-            (
-                _rank_entry(entry, query_readings)
-                for entry in parsed_archive.data
-            ),
-            key=lambda match: (-match.score, match.entry.company_name),
-        )
+        ranked = _top_ranked(directory.data, query_readings)
         matches: list[Company]
         selected_matches: list[_SearchMatch]
         if parsed_kind is None:
-            selected_matches = list(ranked[:5])
+            selected_matches = list(ranked[:_RESULT_LIMIT])
             matches = [
                 Company(
                     company_name=match.entry.company_name,
@@ -137,10 +144,11 @@ class CompanySearchService:
                 for ranking, match in enumerate(selected_matches, start=1)
             ]
         else:
-            matches, selected_matches = self._filter_disclosures(
-                ranked,
-                parsed_kind,
-            )
+            filtered = self._filter_disclosures(ranked, parsed_kind)
+            if filtered.upstream_failure is not None:
+                return _upstream_failure(filtered.upstream_failure)
+            matches = list(filtered.companies)
+            selected_matches = list(filtered.selected)
         if not matches:
             return _not_found(parsed_kind is None)
         return Result.success(
@@ -153,22 +161,28 @@ class CompanySearchService:
         self,
         ranked: Sequence[_SearchMatch],
         report_kind: ReportKind,
-    ) -> tuple[list[Company], list[_SearchMatch]]:
+    ) -> _FilteredCandidates:
         detail_type = _detail_type(report_kind)
         matches: list[Company] = []
         selected_matches: list[_SearchMatch] = []
-        for match in ranked[:20]:
+        failures: list[Result[tuple[DartListRow, ...]]] = []
+        attempts = 0
+        for match in ranked[:_RANKED_CANDIDATES]:
             rows_result = self._source.list_disclosures(
                 match.entry.corp_code,
                 detail_type,
             )
-            if (
-                not rows_result.ok
-                or not rows_result.data
-                or not any(
-                    matches_report_kind(report_kind, row.report_nm)
-                    for row in rows_result.data
-                )
+            attempts += 1
+            if not rows_result.ok:
+                # With a shared directory a bad key first fails here; it must
+                # not be reported as "no company has the report".
+                if _error_code(rows_result.error) is ErrorCode.UPSTREAM_AUTH:
+                    return _FilteredCandidates((), (), rows_result)
+                failures.append(rows_result)
+                continue
+            if not rows_result.data or not any(
+                matches_report_kind(report_kind, row.report_nm)
+                for row in rows_result.data
             ):
                 continue
             selected_matches.append(match)
@@ -182,9 +196,38 @@ class CompanySearchService:
                     match_confidence=match.confidence,
                 )
             )
-            if len(matches) == 5:
+            if len(matches) == _RESULT_LIMIT:
                 break
-        return matches, selected_matches
+        every_attempt_failed = bool(failures) and len(failures) == attempts
+        if every_attempt_failed and not any(
+            _error_code(failure.error) is ErrorCode.NOT_FOUND for failure in failures
+        ):
+            return _FilteredCandidates((), (), failures[0])
+        return _FilteredCandidates(tuple(matches), tuple(selected_matches))
+
+
+def _error_code(error: ErrorInfo | None) -> ErrorCode | None:
+    return None if error is None else error.code
+
+
+def _upstream_failure(
+    failure: Result[tuple[DartListRow, ...]],
+) -> Result[tuple[Company, ...]]:
+    return Result.failure(
+        failure.error
+        if failure.error is not None
+        else error_info(
+            ErrorCode.UPSTREAM_UNAVAILABLE,
+            "OpenDART 공시 검색에 실패했습니다.",
+            retryable=True,
+        ),
+        warnings=failure.warnings,
+        next_action=(
+            failure.next_action
+            if failure.next_action is not None
+            else _UPSTREAM_FAILURE_NEXT_ACTION
+        ),
+    )
 
 
 def _not_found(archive_only: bool) -> Result[tuple[Company, ...]]:
@@ -204,74 +247,125 @@ def _not_found(archive_only: bool) -> Result[tuple[Company, ...]]:
     )
 
 
-def _parse_company_archive(content: bytes) -> Result[tuple[CompanyCode, ...]]:
-    from dart_crawler.zip_safety import inspect_archive
-
-    inspection = inspect_archive(content, limits=ArchiveLimits())
-    if not inspection.ok or inspection.data is None:
-        return Result.failure(
-            inspection.error
-            if inspection.error is not None
-            else error_info(
-                ErrorCode.PARSE_FAILED,
-                "회사코드 ZIP이 잘못되었습니다.",
-                retryable=False,
-            )
-        )
-    xml_name = next(
-        (
-            member.name
-            for member in inspection.data
-            if member.name.casefold().endswith("corpcode.xml")
-        ),
-        None,
-    )
-    if xml_name is None:
-        return Result.failure(
-            error_info(
-                ErrorCode.PARSE_FAILED,
-                "CORPCODE.xml을 찾지 못했습니다.",
-                retryable=False,
-            )
-        )
-    xml_result = read_member(content, xml_name, limits=ArchiveLimits())
-    if not xml_result.ok or xml_result.data is None:
-        return Result.failure(
-            xml_result.error
-            if xml_result.error is not None
-            else error_info(
-                ErrorCode.PARSE_FAILED,
-                "CORPCODE.xml을 읽지 못했습니다.",
-                retryable=False,
-            )
-        )
-    try:
-        root = ElementTree.fromstring(xml_result.data)
-    except ElementTree.ParseError:
-        return Result.failure(
-            error_info(
-                ErrorCode.PARSE_FAILED,
-                "CORPCODE.xml 형식이 잘못되었습니다.",
-                retryable=False,
-            )
-        )
-    entries: list[CompanyCode] = []
-    for item in root.findall("./list"):
-        corp_code = item.findtext("corp_code", "")
-        company_name = item.findtext("corp_name", "").strip()
-        stock_code = item.findtext("stock_code", "").strip() or None
-        if len(corp_code) != 8 or not corp_code.isdigit() or not company_name:
-            continue
-        entries.append(CompanyCode(corp_code, company_name, stock_code))
-    return Result.success(tuple(entries))
-
-
 def _rank_entry(
     entry: CompanyCode,
     query: _QueryReadings,
 ) -> _SearchMatch:
+    """Reference ranking of one entry; _top_ranked must agree with it."""
     match = _rank_company(entry, query)
     return _SearchMatch(entry, match.score, match.confidence)
+
+
+# (-score, company_name, archive index, confidence): the index is unique, so
+# comparison never reaches the confidence.
+type _RankKey = tuple[float, str, int, MatchConfidence]
+
+
+class _BestKeys:
+    """The smallest rank keys offered so far, at most `limit`, kept sorted."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self.keys: list[_RankKey] = []
+
+    def floor_score(self) -> float | None:
+        """The worst kept score once full: a candidate below it cannot enter."""
+        if len(self.keys) < self._limit:
+            return None
+        return -self.keys[-1][0]
+
+    def offer(self, key: _RankKey) -> None:
+        if len(self.keys) < self._limit:
+            insort(self.keys, key)
+        elif key < self.keys[-1]:
+            insort(self.keys, key)
+            self.keys.pop()
+
+
+class _SimilarityBounds:
+    """Upper bounds of SequenceMatcher(None, query, name).ratio() * 100.
+
+    They repeat difflib's real_quick_ratio and quick_ratio arithmetic exactly
+    (the same integer counts through the same 2.0 * matches / length), so each
+    bound is never below the score it stands for.
+    """
+
+    def __init__(self, query: str) -> None:
+        self._length = len(query)
+        self._counts = tuple(Counter(query).items())
+
+    def real_quick(self, name: str) -> float:
+        return _percent(min(self._length, len(name)), self._length + len(name))
+
+    def quick(self, name: str) -> float:
+        # quick_ratio counts the characters the two strings share as
+        # multisets: the sum over the query's characters of the smaller count.
+        matches = 0
+        for char, query_count in self._counts:
+            name_count = name.count(char)
+            matches += min(query_count, name_count)
+        return _percent(matches, self._length + len(name))
+
+
+def _percent(matches: int, length: int) -> float:
+    # difflib._calculate_ratio, then the * 100.0 of _similar_score.
+    return (2.0 * matches / length if length else 1.0) * 100.0
+
+
+def _top_ranked(
+    directory: CompanyDirectoryIndex,
+    query: _QueryReadings,
+) -> tuple[_SearchMatch, ...]:
+    """Exactly sorted(ranked, key=(-score, company_name))[:20] of every entry.
+
+    The reference sort is stable, so (score, name) ties keep archive order;
+    the archive index in the key reproduces that. Fixed-score tiers are ranked
+    first so the 20th-best score is known early. A SIMILAR candidate whose
+    upper bound is strictly below the 20th-best score (once there are 20) can
+    never enter, so its SequenceMatcher.ratio is skipped; an equal bound is
+    still scored because the name may win the tie.
+    """
+    best = _BestKeys(_RANKED_CANDIDATES)
+    entries = directory.entries
+    readings = directory.readings
+    similar: list[int] = []
+    for index, entry in enumerate(entries):
+        match = _rank_readings(entry, readings[index], query)
+        if match is None:
+            similar.append(index)
+        else:
+            best.offer((-match.score, entry.company_name, index, match.confidence))
+    bounds = _SimilarityBounds(query.brand)
+    floor = best.floor_score()
+    candidates: list[tuple[float, int]] = []
+    for index in similar:
+        canonical = readings[index].canonical
+        if floor is not None and bounds.real_quick(canonical) < floor:
+            continue
+        bound = bounds.quick(canonical)
+        if floor is not None and bound < floor:
+            continue
+        candidates.append((-bound, index))
+    # Highest bound first raises the 20th-best score as early as possible;
+    # once a bound is strictly below it, every remaining bound is too.
+    heapify(candidates)
+    while candidates:
+        negative_bound, index = heappop(candidates)
+        floor = best.floor_score()
+        if floor is not None and -negative_bound < floor:
+            break
+        best.offer(
+            (
+                -_similar_score(query, readings[index]),
+                entries[index].company_name,
+                index,
+                MatchConfidence.SIMILAR,
+            )
+        )
+    return tuple(
+        _SearchMatch(entries[index], -negative_score, confidence)
+        for negative_score, _, index, confidence in best.keys
+    )
 
 
 def _weak_match_next_action(match: _SearchMatch) -> str | None:

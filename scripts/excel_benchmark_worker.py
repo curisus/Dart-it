@@ -20,13 +20,17 @@ import importlib.metadata
 import json
 import os
 import platform
-import shutil
-import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Final, Never
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+else:
+    import resource
 
 _PROJECT_ROOT: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PROJECT_ROOT / "src"))
@@ -155,29 +159,66 @@ def _select_and_serialize(dataset: NormalizedExcelDataset) -> int:
     return maximum_bytes
 
 
+if sys.platform == "win32":
+
+    class _ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = (
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        )
+
+    def _peak_rss_bytes() -> int:
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        except OSError:
+            _fail("peak_rss_measurement_failed")
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.argtypes = ()
+        get_current_process.restype = wintypes.HANDLE
+        get_process_memory_info = psapi.GetProcessMemoryInfo
+        get_process_memory_info.argtypes = (
+            wintypes.HANDLE,
+            ctypes.POINTER(_ProcessMemoryCounters),
+            wintypes.DWORD,
+        )
+        get_process_memory_info.restype = wintypes.BOOL
+        counters = _ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(_ProcessMemoryCounters)
+        if not get_process_memory_info(
+            get_current_process(),
+            ctypes.byref(counters),
+            counters.cb,
+        ):
+            _fail("peak_rss_measurement_failed")
+        peak_bytes: int = counters.PeakWorkingSetSize
+        return peak_bytes
+
+else:
+    # ru_maxrss is reported in bytes on macOS and in KiB on Linux.
+    _MAXRSS_UNIT_BYTES: Final = 1 if sys.platform == "darwin" else 1024
+
+    def _peak_rss_bytes() -> int:
+        try:
+            peak_units = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        except OSError:
+            _fail("peak_rss_measurement_failed")
+        return peak_units * _MAXRSS_UNIT_BYTES
+
+
 def _peak_rss_mib() -> float:
-    powershell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
-    if powershell is None:
-        _fail("powershell_not_found")
-    completed = subprocess.run(  # noqa: S603
-        [
-            powershell,
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            f"[System.Diagnostics.Process]::GetProcessById({os.getpid()}).PeakWorkingSet64",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
+    peak_bytes = _peak_rss_bytes()
+    if peak_bytes <= 0:
         _fail("peak_rss_measurement_failed")
-    try:
-        return int(completed.stdout.strip()) / _MIB
-    except ValueError:
-        _fail("peak_rss_measurement_failed")
+    return peak_bytes / _MIB
 
 
 def run_worker(row_count: int, column_count: int) -> JsonObject:

@@ -12,6 +12,8 @@ from pydantic import SecretStr
 from dart_crawler.amount_checker import compare_statement_amounts
 from dart_crawler.api_models import DartListRow
 from dart_crawler.attachments import AttachmentService
+from dart_crawler.company_directory import load_company_directory
+from dart_crawler.company_name_matching import _query_readings
 from dart_crawler.company_search import CompanySearchService
 from dart_crawler.dart_api import DartApi, FinancialQuery
 from dart_crawler.document_model import ParsedDocument
@@ -232,23 +234,48 @@ class CrawlerService:
                 violation.error,
                 next_action=violation.next_action,
             )
-        company = self.search_companies(corp_code, report_kind)
-        if not company.ok or not company.data:
+        check_input_action = "회사코드와 보고서 종류를 확인하세요."
+        # The ranked search this lookup replaced refused an empty query before
+        # any request; the same emptiness rule keeps that answer.
+        if not _query_readings(corp_code).normalized:
             return Result.failure(
-                company.error
-                if company.error is not None
-                else _not_found("회사코드에 해당하는 회사를 찾지 못했습니다."),
-                warnings=company.warnings,
-                next_action="회사코드와 보고서 종류를 확인하세요.",
+                error_info(
+                    ErrorCode.INVALID_INPUT,
+                    "회사 검색어가 비어 있습니다.",
+                    retryable=False,
+                ),
+                next_action=check_input_action,
             )
-        return _with_next_action(
-            FilingService(self._api).list(
-                corp_code,
-                company.data[0].company_name,
-                report_kind,
-            ),
-            _SELECT_ATTACHMENT_NEXT_ACTION,
+        # The code is already known, so its name comes straight from the
+        # cached directory instead of a second ranked search.
+        directory = load_company_directory(self._api)
+        company = (
+            directory.data.find(corp_code)
+            if directory.ok and directory.data is not None
+            else None
         )
+        if company is None:
+            return Result.failure(
+                directory.error
+                if directory.error is not None
+                else _not_found("회사코드에 해당하는 회사를 찾지 못했습니다."),
+                warnings=directory.warnings,
+                next_action=check_input_action,
+            )
+        filings = FilingService(self._api).list(
+            corp_code,
+            company.company_name,
+            report_kind,
+        )
+        # A listed company without the report kind stays "not found", as the
+        # report-kind filter of the replaced ranked search answered it.
+        if filings.ok and not filings.data:
+            return Result.failure(
+                _not_found("대상 보고서가 존재하는 회사를 찾지 못했습니다."),
+                warnings=filings.warnings,
+                next_action=check_input_action,
+            )
+        return _with_next_action(filings, _SELECT_ATTACHMENT_NEXT_ACTION)
 
     def list_report_attachments(self, rcept_no: str) -> Result[tuple[Attachment, ...]]:
         """List selectable report attachments for one receipt number."""

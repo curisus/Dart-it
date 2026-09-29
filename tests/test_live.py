@@ -1,20 +1,27 @@
-import os
+from pathlib import Path
 
 import pytest
 
 from dart_crawler.dart_api import DartApi
 from dart_crawler.http_client import HttpxClient
+from dart_crawler.settings import load_settings
+
+_SETTINGS = load_settings(process_dir=Path(__file__).resolve().parents[1])
 
 
 @pytest.mark.live
 @pytest.mark.skipif(
-    not os.environ.get("OPEN_DART_API_KEY"),
-    reason="OPEN_DART_API_KEY is not set",
+    not _SETTINGS.ok,
+    reason="OPEN_DART_API_KEY is not set in the environment or project .env",
 )
 def test_live_samsung_disclosure_search() -> None:
-    api_key = os.environ["OPEN_DART_API_KEY"]
+    settings = _SETTINGS.data
+    assert settings is not None
     with HttpxClient() as client:
-        result = DartApi(client, api_key=api_key).list_disclosures(
+        result = DartApi(
+            client,
+            api_key=settings.api_key.get_secret_value(),
+        ).list_disclosures(
             "00126380",
             "A001",
         )
