@@ -3,14 +3,18 @@ from dataclasses import dataclass, field
 import pytest
 from pydantic import SecretStr
 
+from dart_crawler import company_search
 from dart_crawler.api_models import DartListRow, FinancialAccount
 from dart_crawler.attachments import AttachmentService
+from dart_crawler.company_name_matching import CompanyCode
+from dart_crawler.company_search import CompanySearchService
 from dart_crawler.crawler_service import CrawlerService
 from dart_crawler.dart_api import DartApi, FinancialQuery
 from dart_crawler.domain import Attachment
 from dart_crawler.http_client import HttpResponse
 from dart_crawler.query_limits import LOCAL_QUERY_LIMITS, MAX_RESPONSE_ROWS
 from dart_crawler.result import ErrorCode, Result, WarningCode, WarningInfo
+from tests.company_directory_fixtures import directory_archive
 from tests.report_section_test_support import (
     ATTACHMENT_ID,
     RCEPT_NO,
@@ -244,3 +248,210 @@ def test_each_discovery_step_points_at_the_next_one(
     # The remote surface registers no export tool, and both surfaces share this
     # text, so it must never name one.
     assert "export_report_excel" not in listing.next_action
+
+
+_CORP_CODE_URL = "https://opendart.fss.or.kr/api/corpCode.xml"
+_LIST_URL = "https://opendart.fss.or.kr/api/list.json"
+_DIRECTORY_ARCHIVE = directory_archive(
+    (
+        CompanyCode("00126380", "Sample Holdings", "005930"),
+        CompanyCode("00126381", "Sample Holdings Bio", None),
+    )
+)
+_AUDIT_LIST_JSON = (
+    '{"status":"000","message":"OK","list":[{"corp_cls":"Y",'
+    '"corp_name":"보고서상 회사명","corp_code":"00126380",'
+    '"stock_code":"005930","report_nm":"감사보고서 (2025.12)",'
+    '"rcept_no":"20260310002820","rcept_dt":"20260310","rm":""}]}'
+)
+
+
+@dataclass(slots=True)
+class DirectoryHttpClient:
+    """Fake OpenDART serving the company directory and one disclosure list."""
+
+    directory: HttpResponse = field(
+        default_factory=lambda: HttpResponse(200, {}, _DIRECTORY_ARCHIVE)
+    )
+    listing: str = _AUDIT_LIST_JSON
+    requested_urls: list[str] = field(default_factory=list)
+
+    def get(self, url: str, *, params: dict[str, str]) -> HttpResponse:
+        del params
+        self.requested_urls.append(url)
+        if url == _CORP_CODE_URL:
+            return self.directory
+        if url == _LIST_URL:
+            return HttpResponse(200, {}, self.listing.encode())
+        raise AssertionError(url)
+
+    def close(self) -> None:
+        return None
+
+
+def _forbid_ranking(*_args: object, **_kwargs: object) -> object:
+    raise AssertionError
+
+
+def test_list_report_filings_names_the_company_from_the_cached_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: neither a ranked search nor its per-candidate filing checks run
+    monkeypatch.setattr(company_search, "_top_ranked", _forbid_ranking)
+    monkeypatch.setattr(CompanySearchService, "search", _forbid_ranking)
+    http_client = DirectoryHttpClient()
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    # When
+    first = service.list_report_filings("00126380", "audit")
+    second = service.list_report_filings("00126380", "audit")
+
+    # Then
+    for result in (first, second):
+        assert result.ok is True
+        assert result.data is not None
+        assert [filing.company_name for filing in result.data] == ["Sample Holdings"]
+    assert http_client.requested_urls == [_CORP_CODE_URL, _LIST_URL, _LIST_URL]
+
+
+def test_list_report_filings_rejects_an_unknown_corp_code_without_a_list_call() -> (
+    None
+):
+    # Given
+    http_client = DirectoryHttpClient()
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    # When
+    result = service.list_report_filings("99999999", "audit")
+
+    # Then
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert result.error.message == "회사코드에 해당하는 회사를 찾지 못했습니다."
+    assert result.next_action == "회사코드와 보고서 종류를 확인하세요."
+    assert http_client.requested_urls == [_CORP_CODE_URL]
+
+
+def test_list_report_filings_returns_the_directory_failure() -> None:
+    # Given
+    http_client = DirectoryHttpClient(directory=HttpResponse(401, {}, b""))
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    # When
+    result = service.list_report_filings("00126380", "audit")
+
+    # Then
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.UPSTREAM_AUTH
+    assert result.next_action == "회사코드와 보고서 종류를 확인하세요."
+    assert http_client.requested_urls == [_CORP_CODE_URL]
+
+
+def test_list_report_filings_rejects_a_report_kind_before_any_request() -> None:
+    # Given
+    http_client = DirectoryHttpClient()
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    # When
+    result = service.list_report_filings("00126380", "unsupported")
+
+    # Then
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert http_client.requested_urls == []
+
+
+_EMPTY_LIST_JSON = '{"status":"000","message":"OK","list":[]}'
+_HALF_YEAR_LIST_JSON = (
+    '{"status":"000","message":"OK","list":[{"corp_cls":"Y",'
+    '"corp_name":"보고서상 회사명","corp_code":"00126380",'
+    '"stock_code":"005930","report_nm":"반기보고서 (2025.06)",'
+    '"rcept_no":"20250814002820","rcept_dt":"20250814","rm":""}]}'
+)
+
+
+@pytest.mark.parametrize("corp_code", ["", "   "])
+@pytest.mark.parametrize("directory_status", [200, 401])
+def test_list_report_filings_refuses_an_empty_corp_code_without_any_request(
+    corp_code: str, directory_status: int
+) -> None:
+    # Given: the directory would answer (200) or fail (401) if it were asked
+    http_client = DirectoryHttpClient(
+        directory=HttpResponse(directory_status, {}, _DIRECTORY_ARCHIVE)
+    )
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    # When
+    result = service.list_report_filings(corp_code, "audit")
+
+    # Then: the envelope the ranked lookup gave an empty query
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.INVALID_INPUT
+    assert result.error.message == "회사 검색어가 비어 있습니다."
+    assert result.error.retryable is False
+    assert result.warnings == ()
+    assert result.next_action == "회사코드와 보고서 종류를 확인하세요."
+    assert http_client.requested_urls == []
+
+
+def test_list_report_filings_checks_the_report_kind_before_an_empty_corp_code() -> None:
+    # Given
+    http_client = DirectoryHttpClient()
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    # When
+    result = service.list_report_filings("", "unsupported")
+
+    # Then
+    assert result.error is not None
+    assert result.error.message == "report_kind가 지원 범위에 없습니다."
+    assert http_client.requested_urls == []
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [_EMPTY_LIST_JSON, _HALF_YEAR_LIST_JSON],
+    ids=["no_disclosure", "half_year_only"],
+)
+def test_list_report_filings_reports_a_company_without_the_report_kind(
+    listing: str,
+) -> None:
+    # Given: the company is in the directory but has no audit filing
+    http_client = DirectoryHttpClient(listing=listing)
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    # When
+    result = service.list_report_filings("00126380", "audit")
+
+    # Then
+    assert result.ok is False
+    assert result.data is None
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert result.error.message == "대상 보고서가 존재하는 회사를 찾지 못했습니다."
+    assert result.error.retryable is False
+    assert result.warnings == ()
+    assert result.next_action == "회사코드와 보고서 종류를 확인하세요."
+    assert http_client.requested_urls == [_CORP_CODE_URL, _LIST_URL]
+
+
+def test_list_report_filings_passes_a_filing_list_failure_through() -> None:
+    # Given: OpenDART answers the disclosure search with "no data" (013)
+    http_client = DirectoryHttpClient(
+        listing='{"status":"013","message":"조회된 데이타가 없습니다."}'
+    )
+    service = CrawlerService(SecretStr("test-key"), http_client)
+
+    # When
+    result = service.list_report_filings("00126380", "audit")
+
+    # Then: the filing service's own failure, not the missing-report envelope
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert result.error.message == "OpenDART 조회 결과가 없습니다."
+    assert result.next_action == "잠시 후 공시 목록을 다시 요청하세요."

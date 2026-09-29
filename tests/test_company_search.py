@@ -7,7 +7,7 @@ import pytest
 from dart_crawler.api_models import DartListRow
 from dart_crawler.company_search import CompanySearchService
 from dart_crawler.domain import Company, Market, MatchConfidence
-from dart_crawler.result import ErrorCode, Result
+from dart_crawler.result import ErrorCode, Result, error_info
 
 
 def _company_archive() -> bytes:
@@ -401,3 +401,214 @@ def test_search_rejects_invalid_report_kind() -> None:
     assert result.ok is False
     assert result.error is not None
     assert result.error.code is ErrorCode.INVALID_INPUT
+
+
+def _sample_row(corp_code: str) -> DartListRow:
+    return DartListRow(
+        corp_cls="Y",
+        corp_name="Sample Holdings",
+        corp_code=corp_code,
+        stock_code="005930",
+        report_nm="감사보고서 (2025.12)",
+        rcept_no="20260310002820",
+        rcept_dt="20260310",
+        rm="",
+    )
+
+
+def _list_failure(
+    code: ErrorCode,
+    message: str,
+    next_action: str | None = None,
+) -> Result[tuple[DartListRow, ...]]:
+    return Result[tuple[DartListRow, ...]].failure(
+        error_info(code, message, retryable=False),
+        next_action=next_action,
+    )
+
+
+_NO_ROWS: Result[tuple[DartListRow, ...]] = Result.success(())
+
+
+class ScriptedSource:
+    """Answers list_disclosures from a script, one answer per call.
+
+    A success answer is returned as is unless with_rows asks for one audit
+    report row of the checked company.
+    """
+
+    def __init__(
+        self,
+        archive: Result[bytes],
+        answers: list[Result[tuple[DartListRow, ...]]],
+        *,
+        with_rows: bool = False,
+    ) -> None:
+        self.archive = archive
+        self.answers = answers
+        self.with_rows = with_rows
+        self.calls: list[str] = []
+        self.downloads = 0
+
+    def download_company_codes(self) -> Result[bytes]:
+        self.downloads += 1
+        return self.archive
+
+    def list_disclosures(
+        self,
+        corp_code: str,
+        report_detail_type: str,
+    ) -> Result[tuple[DartListRow, ...]]:
+        del report_detail_type
+        self.calls.append(corp_code)
+        answer = self.answers[min(len(self.calls), len(self.answers)) - 1]
+        if answer.ok and self.with_rows:
+            return Result.success((_sample_row(corp_code),))
+        return answer
+
+
+def test_bad_key_on_the_first_filing_check_stops_and_is_returned() -> None:
+    # Given
+    auth = _list_failure(
+        ErrorCode.UPSTREAM_AUTH, "OpenDART API 키가 등록되지 않았습니다."
+    )
+    source = ScriptedSource(Result.success(_company_archive()), [auth])
+
+    # When
+    result = CompanySearchService(source).search("Sample", "audit")
+
+    # Then
+    assert result.ok is False
+    assert result.error == auth.error
+    assert result.next_action == (
+        "OpenDART API 키와 네트워크 상태를 확인한 뒤 다시 시도하세요."
+    )
+    assert len(source.calls) == 1
+
+
+def test_bad_key_after_a_match_still_stops_and_keeps_upstream_next_action() -> None:
+    # Given
+    auth = _list_failure(
+        ErrorCode.UPSTREAM_AUTH,
+        "OpenDART 요청 권한이 없습니다.",
+        next_action="키 권한을 확인하세요.",
+    )
+    source = ScriptedSource(
+        Result.success(_company_archive()), [_NO_ROWS, auth], with_rows=True
+    )
+
+    # When
+    result = CompanySearchService(source).search("Sample", "audit")
+
+    # Then
+    assert result.ok is False
+    assert result.error == auth.error
+    assert result.next_action == "키 권한을 확인하세요."
+    assert len(source.calls) == 2
+
+
+def test_every_filing_check_failing_returns_the_first_failure() -> None:
+    # Given
+    failures = [
+        _list_failure(ErrorCode.UPSTREAM_UNAVAILABLE, f"실패 {index}")
+        for index in range(3)
+    ]
+    source = ScriptedSource(Result.success(_company_archive()), failures)
+
+    # When
+    result = CompanySearchService(source).search("Sample", "audit")
+
+    # Then
+    assert result.ok is False
+    assert result.error == failures[0].error
+    assert result.next_action == (
+        "OpenDART API 키와 네트워크 상태를 확인한 뒤 다시 시도하세요."
+    )
+    assert len(source.calls) == 3
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [
+        [_list_failure(ErrorCode.NOT_FOUND, "OpenDART 조회 결과가 없습니다.")],
+        [
+            _list_failure(ErrorCode.UPSTREAM_UNAVAILABLE, "실패"),
+            _list_failure(ErrorCode.NOT_FOUND, "OpenDART 조회 결과가 없습니다."),
+        ],
+        [_list_failure(ErrorCode.UPSTREAM_UNAVAILABLE, "실패"), _NO_ROWS],
+    ],
+    ids=["all-not-found", "not-found-among-failures", "one-check-answered"],
+)
+def test_filing_checks_that_did_not_all_fail_keep_the_not_found_answer(
+    answers: list[Result[tuple[DartListRow, ...]]],
+) -> None:
+    # Given
+    source = ScriptedSource(Result.success(_company_archive()), answers)
+
+    # When
+    result = CompanySearchService(source).search("Sample", "audit")
+
+    # Then
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code is ErrorCode.NOT_FOUND
+    assert result.error.message == "대상 보고서가 존재하는 회사를 찾지 못했습니다."
+    assert result.next_action == "회사명, 종목코드, 보고서 종류를 확인하세요."
+    assert len(source.calls) == 3
+
+
+def test_search_download_failure_envelope_is_unchanged() -> None:
+    # Given
+    upstream = error_info(
+        ErrorCode.UPSTREAM_AUTH,
+        "OpenDART API 키를 사용할 수 없습니다.",
+        retryable=False,
+    )
+    source = ScriptedSource(
+        Result[bytes].failure(upstream, next_action="다른 안내"), [_NO_ROWS]
+    )
+
+    # When
+    result = CompanySearchService(source).search("Sample", None)
+
+    # Then
+    assert result == Result[tuple[Company, ...]].failure(
+        upstream, next_action="잠시 후 회사 검색을 다시 시도하세요."
+    )
+
+
+def test_search_parse_failure_envelope_is_unchanged() -> None:
+    # Given
+    buffer = BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        archive.writestr("other.xml", "<result />")
+    source = ScriptedSource(Result.success(buffer.getvalue()), [_NO_ROWS])
+
+    # When
+    result = CompanySearchService(source).search("Sample", None)
+
+    # Then
+    assert result == Result[tuple[Company, ...]].failure(
+        error_info(
+            ErrorCode.PARSE_FAILED,
+            "CORPCODE.xml을 찾지 못했습니다.",
+            retryable=False,
+        ),
+        next_action="OpenDART 회사코드 파일 형식을 확인하세요.",
+    )
+
+
+def test_repeated_searches_download_the_directory_once() -> None:
+    # Given
+    source = ScriptedSource(Result.success(_company_archive()), [_NO_ROWS])
+
+    # When
+    first = CompanySearchService(source).search("Sample", None)
+    second = CompanySearchService(source).search("Other", None)
+
+    # Then
+    assert first.ok is True
+    assert second.ok is True
+    assert second.data is not None
+    assert second.data[0].company_name == "Other Company"
+    assert source.downloads == 1
